@@ -1,20 +1,33 @@
 use eframe::{
-    egui::Sense,
-    epaint::{pos2, vec2, CircleShape, Color32, Mesh, Pos2, Rect, Shape, Stroke, Vec2},
+    egui::{Key, Sense},
+    epaint::{pos2, vec2, CircleShape, Color32, ColorImage, Mesh, Pos2, Rect, Shape, Stroke, Vec2},
 };
 use egui_extras::RetainedImage;
+
+use crate::crop::crop;
 
 pub struct MyWidget {
     offset: Vec2,
     zoom_log: f32,
     image: RetainedImage,
     frame: Vec<Pos2>,
+    image_path: String,
 }
 
 const ZOOME_DELTA_COEF: f32 = 500.0;
 
+fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError> {
+    let image = image::io::Reader::open(path)?.decode()?;
+    let size = [image.width() as _, image.height() as _];
+    let image_buffer = image.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+    Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
+}
+
 impl MyWidget {
-    pub fn new(image: RetainedImage) -> Self {
+    pub fn new(path: &str) -> Self {
+        let color_image2 = load_image_from_path(path).unwrap();
+        let image = egui_extras::RetainedImage::from_color_image("test", color_image2);
         let img_size = image.size_vec2();
         Self {
             offset: vec2(0.0, 0.0),
@@ -26,6 +39,7 @@ impl MyWidget {
                 pos2(0.0, img_size.y),
             ],
             image,
+            image_path: path.to_owned(),
         }
     }
 
@@ -128,6 +142,13 @@ impl MyWidget {
             self.frame[id] += drag_delta;
         } else {
             self.offset += drag_delta;
+        }
+
+        let frame = self.frame.clone();
+        if ui.input().key_pressed(Key::Enter) {
+            dbg!("CROP!", &frame);
+            crop(&self.image_path, &frame);
+            dbg!("CROPED!");
         }
 
         response
