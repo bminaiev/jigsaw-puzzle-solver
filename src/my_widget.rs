@@ -1,6 +1,6 @@
 use eframe::{
     egui::Sense,
-    epaint::{pos2, vec2, CircleShape, Color32, Mesh, Pos2, Rect, Shape, Vec2},
+    epaint::{pos2, vec2, CircleShape, Color32, Mesh, Pos2, Rect, Shape, Stroke, Vec2},
 };
 use egui_extras::RetainedImage;
 
@@ -8,15 +8,23 @@ pub struct MyWidget {
     offset: Vec2,
     zoom_log: f32,
     image: RetainedImage,
+    frame: Vec<Pos2>,
 }
 
 const ZOOME_DELTA_COEF: f32 = 500.0;
 
 impl MyWidget {
     pub fn new(image: RetainedImage) -> Self {
+        let img_size = image.size_vec2();
         Self {
             offset: vec2(0.0, 0.0),
             zoom_log: -1.0,
+            frame: vec![
+                pos2(0.0, 0.0),
+                pos2(img_size.x, 0.0),
+                pos2(img_size.x, img_size.y),
+                pos2(0.0, img_size.y),
+            ],
             image,
         }
     }
@@ -49,6 +57,25 @@ impl MyWidget {
         }
     }
 
+    fn find_closest_object(&self, pts: &[Pos2], ui: &eframe::egui::Ui) -> Option<usize> {
+        let mut options = vec![];
+
+        if let Some(mouse) = ui.input().pointer.hover_pos() {
+            for (_i, p) in pts.iter().enumerate() {
+                let screen_p = self.convert_to_screen(p.clone());
+                let dist_to_mouse = screen_p.distance(mouse);
+                // TODO: change to const
+                if dist_to_mouse < 30.0 {
+                    options.push((_i, dist_to_mouse));
+                }
+            }
+        }
+
+        options.sort_by(|c1, c2| c1.1.partial_cmp(&c2.1).unwrap());
+
+        options.get(0).map(|(x, _)| *x)
+    }
+
     pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
         // {
@@ -56,9 +83,6 @@ impl MyWidget {
         //         .add(Shape::rect_filled(rect, Rounding::none(), Color32::YELLOW));
         // }
         {
-            let drag_delta = response.drag_delta();
-            self.offset += drag_delta / self.get_zoom();
-
             self.change_zoom(ui);
         }
 
@@ -75,19 +99,35 @@ impl MyWidget {
             ui.painter().add(Shape::mesh(mesh));
         }
 
-        for pos in [
-            pos2(0.0, 0.0),
-            pos2(img_size.x, img_size.y),
-            pos2(img_size.x, 0.0),
-            pos2(0.0, img_size.y),
-        ]
-        .iter()
-        {
+        for pos in self.frame.iter() {
             ui.painter().add(Shape::Circle(CircleShape::filled(
                 self.convert_to_screen(pos.clone()),
                 10.0,
                 Color32::RED,
             )));
+        }
+
+        for i in 0..self.frame.len() {
+            let p1 = self.convert_to_screen(self.frame[i]);
+            let p2 = self.convert_to_screen(self.frame[(i + 1) % self.frame.len()]);
+            ui.painter().add(Shape::line_segment(
+                [p1, p2],
+                Stroke::new(2.0, Color32::RED),
+            ));
+        }
+
+        let drag_delta = response.drag_delta() / self.get_zoom();
+        if let Some(id) = self.find_closest_object(&self.frame, ui) {
+            let screen_p = self.convert_to_screen(self.frame[id]);
+            ui.painter().add(Shape::circle_stroke(
+                screen_p,
+                13.0,
+                Stroke::new(2.0, Color32::GREEN),
+            ));
+
+            self.frame[id] += drag_delta;
+        } else {
+            self.offset += drag_delta;
         }
 
         response
