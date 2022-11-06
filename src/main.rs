@@ -4,11 +4,12 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use eframe::egui;
+use eframe::{egui, epaint::pos2};
 
 use crate::my_widget::MyWidget;
 
 mod crop;
+mod dsu;
 mod my_widget;
 
 fn main() {
