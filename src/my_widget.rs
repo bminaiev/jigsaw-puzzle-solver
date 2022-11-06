@@ -202,86 +202,146 @@ fn optimize_cycle(cycle: &mut Vec<Point>) {
     }
 }
 
-fn gen_mask(color_image: &ColorImage) -> ColorImage {
-    let width = color_image.size[0];
-    let height = color_image.size[1];
+fn find_center(points: &[Point]) -> Point {
+    let sum_x: usize = points.iter().map(|p| p.x).sum();
+    let sum_y: usize = points.iter().map(|p| p.y).sum();
+    let cnt = points.len();
+    Point {
+        x: sum_x / cnt,
+        y: sum_y / cnt,
+    }
+}
 
-    let id = |x: usize, y: usize| -> usize { x + y * width };
-    let mut is_puzzle = vec![false; width * height];
-
-    for x in 0..width {
-        for y in 0..height {
-            if is_puzzle_color(color_image[(x, y)]) {
-                is_puzzle[id(x, y)] = true;
-            }
+fn find_corners_positions(points: &[Point]) -> Vec<usize> {
+    let center = find_center(points);
+    let dists: Vec<_> = points.iter().map(|p| p.dist2(&center)).collect();
+    const CHECK_LEN: usize = 5;
+    let mut corners = vec![];
+    for i in 0..dists.len() {
+        let (_, max_pos) = (0..CHECK_LEN * 2)
+            .map(|shift| (dists[(i + shift) % dists.len()], shift))
+            .max()
+            .unwrap();
+        if max_pos == CHECK_LEN {
+            corners.push((i + max_pos) % dists.len());
         }
     }
+    eprintln!("corners: {:?}", corners);
+    corners
+}
 
-    let dist_to_not_puzzle = calc_dist_to_not_puzzle(width, height, id, &is_puzzle);
+#[derive(Clone)]
+struct Figure {
+    all_pts: Vec<Point>,
+    border: Vec<Point>,
+    good_border: bool,
+    center: Point,
+}
 
-    let mut dsu = Dsu::new(width * height);
-    for x in 0..width {
-        for y in 0..height {
-            if is_puzzle[id(x, y)] {
-                if x + 1 < width && is_puzzle[id(x + 1, y)] {
-                    dsu.unite(id(x, y), id(x + 1, y));
-                }
-                if y + 1 < height && is_puzzle[id(x, y + 1)] {
-                    dsu.unite(id(x, y), id(x, y + 1));
-                }
-            }
-        }
-    }
-
-    let mut figures = vec![vec![]; width * height];
-    for x in 0..width {
-        for y in 0..height {
-            if is_puzzle[id(x, y)] && dist_to_not_puzzle[id(x, y)] == 1 {
-                figures[dsu.get(id(x, y))].push(Point { x, y });
-            }
-        }
-    }
-
-    let mut use_color = vec![Color32::WHITE; width * height];
-    let mut rng = rand::thread_rng();
-    for i in 0..use_color.len() {
-        use_color[i] = Color32::from_rgb(rng.gen(), rng.gen(), rng.gen());
-    }
-
-    let mut res = ColorImage::new(color_image.size, Color32::WHITE);
-    for x in 0..width {
-        for y in 0..height {
-            if is_puzzle[id(x, y)] {
-                if dist_to_not_puzzle[id(x, y)] == 1 {
-                    res[(x, y)] = Color32::BLACK;
-                } else {
-                    res[(x, y)] = use_color[dsu.get(id(x, y))];
-                }
-            }
-        }
-    }
-    for i in 0..figures.len() {
-        if figures[i].len() < 20 {
-            continue;
-        }
-        let mut cycle = find_cycle(&figures[i]);
+impl Figure {
+    pub fn new(all_pts: &[Point], border: &[Point]) -> Self {
+        let cycle = find_cycle(border);
         let max_dist2 = cycle.windows(2).map(|w| w[0].dist2(&w[1])).max().unwrap();
-        // optimize_cycle(&mut cycle);
-        let max_dist2_after_opt = cycle.windows(2).map(|w| w[0].dist2(&w[1])).max().unwrap();
-        eprintln!(
-            "figure len: {}, max dist2: {}, after_opt : {}",
-            figures[i].len(),
-            max_dist2,
-            max_dist2_after_opt
-        );
-        if max_dist2 > 10 {
-            for j in 0..cycle.len() {
-                res[(cycle[j].x, cycle[j].y)] =
-                    mid_color(j, cycle.len(), Color32::RED, Color32::RED);
-            }
+        let center = find_center(&cycle);
+
+        Self {
+            all_pts: all_pts.iter().cloned().collect(),
+            border: cycle,
+            good_border: max_dist2 <= 10,
+            center,
         }
     }
-    res
+}
+
+struct ParsedPuzzles {
+    width: usize,
+    height: usize,
+    figures: Vec<Figure>,
+}
+
+impl ParsedPuzzles {
+    pub fn new(color_image: &ColorImage) -> Self {
+        let width = color_image.size[0];
+        let height = color_image.size[1];
+
+        let id = |x: usize, y: usize| -> usize { x + y * width };
+        let mut is_puzzle = vec![false; width * height];
+
+        for x in 0..width {
+            for y in 0..height {
+                if is_puzzle_color(color_image[(x, y)]) {
+                    is_puzzle[id(x, y)] = true;
+                }
+            }
+        }
+
+        let dist_to_not_puzzle = calc_dist_to_not_puzzle(width, height, id, &is_puzzle);
+
+        let mut dsu = Dsu::new(width * height);
+        for x in 0..width {
+            for y in 0..height {
+                if is_puzzle[id(x, y)] {
+                    if x + 1 < width && is_puzzle[id(x + 1, y)] {
+                        dsu.unite(id(x, y), id(x + 1, y));
+                    }
+                    if y + 1 < height && is_puzzle[id(x, y + 1)] {
+                        dsu.unite(id(x, y), id(x, y + 1));
+                    }
+                }
+            }
+        }
+
+        let mut figures_borders = vec![vec![]; width * height];
+        let mut figures_inside = vec![vec![]; width * height];
+        for x in 0..width {
+            for y in 0..height {
+                if is_puzzle[id(x, y)] {
+                    if dist_to_not_puzzle[id(x, y)] == 1 {
+                        figures_borders[dsu.get(id(x, y))].push(Point { x, y });
+                    }
+                    figures_inside[dsu.get(id(x, y))].push(Point { x, y });
+                }
+            }
+        }
+
+        let mut res_figures = vec![];
+
+        for i in 0..figures_borders.len() {
+            if figures_borders[i].len() < 20 {
+                continue;
+            }
+            res_figures.push(Figure::new(&figures_inside[i], &figures_borders[i]));
+        }
+
+        Self {
+            width,
+            height,
+            figures: res_figures,
+        }
+    }
+
+    pub fn gen_image(&self) -> ColorImage {
+        let mut res = ColorImage::new([self.width, self.height], Color32::WHITE);
+
+        let mut rng = rand::thread_rng();
+        for figure in self.figures.iter() {
+            let color = Color32::from_rgb(rng.gen(), rng.gen(), rng.gen());
+            for p in figure.all_pts.iter() {
+                res[(p.x, p.y)] = color;
+            }
+            let border_color = if figure.good_border {
+                Color32::BLACK
+            } else {
+                Color32::RED
+            };
+            for p in figure.border.iter() {
+                res[(p.x, p.y)] = border_color;
+            }
+            res[(figure.center.x, figure.center.y)] = Color32::BLUE;
+        }
+
+        res
+    }
 }
 
 fn mid_color(pos: usize, len: usize, start: Color32, end: Color32) -> Color32 {
@@ -295,14 +355,15 @@ fn mid_color(pos: usize, len: usize, start: Color32, end: Color32) -> Color32 {
 
 impl MyWidget {
     pub fn new(path: &str) -> Self {
-        let color_image2 = load_image_from_path(path).unwrap();
+        let color_image = load_image_from_path(path).unwrap();
         let mask_image = {
-            let color = gen_mask(&color_image2);
+            let parsed = ParsedPuzzles::new(&color_image);
+            let color = parsed.gen_image();
             save_color_image(&color, "img/puzzle.jpg");
             RetainedImage::from_color_image("mask", color)
         };
 
-        let image = RetainedImage::from_color_image("test", color_image2);
+        let image = RetainedImage::from_color_image("test", color_image);
         let img_size = image.size_vec2();
         Self {
             offset: vec2(0.0, 0.0),
