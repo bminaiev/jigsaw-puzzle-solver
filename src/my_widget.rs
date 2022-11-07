@@ -4,15 +4,21 @@ use eframe::{
     egui::{Key, Sense},
     emath::Align2,
     epaint::{
-        pos2, vec2, CircleShape, Color32, ColorImage, FontFamily, FontId, Mesh, Pos2, Rect, Shape,
-        Stroke, Vec2,
+        pos2, vec2, CircleShape, Color32, ColorImage, FontFamily, FontId, Mesh, Pos2, Rect,
+        Rounding, Shape, Stroke, Vec2,
     },
 };
 use egui_extras::RetainedImage;
 use image::ImageBuffer;
 use rand::Rng;
 
-use crate::{crop::crop, dsu::Dsu};
+use crate::{
+    border_matcher::match_borders,
+    crop::crop,
+    dsu::Dsu,
+    figure::Figure,
+    point::{Point, PointF},
+};
 
 use itertools::Itertools;
 
@@ -108,232 +114,6 @@ fn calc_dist_to_not_puzzle(
     dist_to_not_puzzle
 }
 
-#[derive(Clone, Copy)]
-struct Point {
-    x: usize,
-    y: usize,
-}
-
-impl Point {
-    pub fn dist2(&self, other: &Point) -> usize {
-        let dx = self.x - other.x;
-        let dy = self.y - other.y;
-        dx * dx + dy * dy
-    }
-
-    pub fn pos2(&self) -> Pos2 {
-        pos2(self.x as f32, self.y as f32)
-    }
-
-    pub fn angle_to(&self, other: &Self) -> f32 {
-        let dy = (other.y as f32) - (self.y as f32);
-        let dx = (other.x as f32) - (self.x as f32);
-        dy.atan2(dx)
-    }
-}
-
-fn find_cycle(points: &[Point]) -> Vec<Point> {
-    let mut used = vec![false; points.len()];
-    used[0] = true;
-    let mut path = vec![points[0]];
-    loop {
-        let last = *path.last().unwrap();
-        let mut next = None;
-        for i in 0..used.len() {
-            if !used[i] {
-                let ndist = last.dist2(&points[i]);
-                if next.is_none() || last.dist2(&points[next.unwrap()]) > ndist {
-                    next = Some(i);
-                }
-            }
-        }
-        if let Some(next) = next {
-            path.push(points[next]);
-            used[next] = true;
-        } else {
-            break;
-        }
-    }
-    optimize_cycle(&mut path);
-    let area = calc_signed_area(&path);
-    if area > 0.0 {
-        // make counter-clock-wise
-        path.reverse();
-    }
-    path
-}
-
-fn cycle_rev(a: &mut [Point], mut from: usize, mut len: usize) {
-    while len > 1 {
-        let end = (from + len - 1) % a.len();
-        a.swap(from, end);
-        from = (from + 1) % a.len();
-        len -= 2;
-    }
-}
-
-fn optimize_cycle(cycle: &mut Vec<Point>) {
-    // reverse a part of the cycle to minimize sum of dist^2 between neighbours
-    loop {
-        let mut changed = false;
-        for i in 0..cycle.len() {
-            for len in 2..(cycle.len() + 1) / 2 {
-                let first = cycle[i];
-                let prev = cycle[(i + cycle.len() - 1) % cycle.len()];
-                let last = cycle[(i + len - 1) % cycle.len()];
-                let next = cycle[(i + len) % cycle.len()];
-
-                let cur_dist = prev.dist2(&first) + last.dist2(&next);
-                let potential_dist = prev.dist2(&last) + first.dist2(&next);
-                if potential_dist < cur_dist {
-                    changed = true;
-                    cycle_rev(cycle, i, len);
-                }
-            }
-        }
-
-        if !changed {
-            break;
-        }
-    }
-}
-
-fn find_center(points: &[Point]) -> Point {
-    let sum_x: usize = points.iter().map(|p| p.x).sum();
-    let sum_y: usize = points.iter().map(|p| p.y).sum();
-    let cnt = points.len();
-    Point {
-        x: sum_x / cnt,
-        y: sum_y / cnt,
-    }
-}
-
-fn calc_signed_area(pts: &[Point]) -> f32 {
-    let mut res = 0.0;
-    for i in 0..pts.len() {
-        let p1 = pts[i];
-        let p2 = pts[(i + 1) % pts.len()];
-        res += (p1.x as f32) * (p2.y as f32) - (p1.y as f32) * (p2.x as f32);
-    }
-    res
-}
-
-fn fmax(x: f32, y: f32) -> f32 {
-    if x > y {
-        x
-    } else {
-        y
-    }
-}
-
-fn fmin(x: f32, y: f32) -> f32 {
-    if x < y {
-        x
-    } else {
-        y
-    }
-}
-
-fn filter_4_corners(all: &[Point], idxs: &[usize]) -> Vec<usize> {
-    let mut best_score = f32::MAX;
-    let n = idxs.len();
-    let mut best = vec![];
-
-    fn norm_angle(mut a: f32) -> f32 {
-        while a < 0.0 {
-            a += PI * 2.0;
-        }
-        while a >= PI * 2.0 {
-            a -= PI * 2.0;
-        }
-        fmin(a, PI * 2.0 - a)
-    }
-
-    fn find_angle(p1: Point, p2: Point, p3: Point) -> f32 {
-        let a1 = p1.angle_to(&p2);
-        let a2 = p2.angle_to(&p3);
-        norm_angle(a1 - a2)
-    }
-
-    fn angle_score(a: f32) -> f32 {
-        (PI / 2.0 - a).abs()
-    }
-
-    let calc_score = |pts: &[Point]| -> f32 {
-        let sum_angles: f32 = (0..4)
-            .map(|i| angle_score(find_angle(pts[i], pts[(i + 1) % 4], pts[(i + 2) % 4])))
-            .sum();
-
-        let dists: Vec<_> = (0..4).map(|i| pts[i].dist2(&pts[(i + 1) % 4])).collect();
-        let max_dist = *dists.iter().max().unwrap();
-        let min_dist = *dists.iter().min().unwrap();
-        let dist_coef = (max_dist as f32) / (min_dist as f32);
-
-        sum_angles * dist_coef
-    };
-
-    for i1 in 0..n {
-        for i2 in i1 + 1..n {
-            for i3 in i2 + 1..n {
-                for i4 in i3 + 1..n {
-                    let pts = [all[idxs[i1]], all[idxs[i2]], all[idxs[i3]], all[idxs[i4]]];
-                    let score = calc_score(&pts);
-                    if score < best_score {
-                        best_score = score;
-                        best = vec![idxs[i1], idxs[i2], idxs[i3], idxs[i4]];
-                    }
-                }
-            }
-        }
-    }
-    best
-}
-
-fn find_corners_positions(points: &[Point]) -> Vec<usize> {
-    let center = find_center(points);
-    let dists: Vec<_> = points.iter().map(|p| p.dist2(&center)).collect();
-    const CHECK_LEN: usize = 5;
-    let mut corners = vec![];
-    for i in 0..dists.len() {
-        let (_, max_pos) = (0..CHECK_LEN * 2)
-            .map(|shift| (dists[(i + shift) % dists.len()], shift))
-            .max()
-            .unwrap();
-        if max_pos == CHECK_LEN {
-            corners.push((i + max_pos) % dists.len());
-        }
-    }
-    filter_4_corners(&points, &corners)
-}
-
-#[derive(Clone)]
-struct Figure {
-    all_pts: Vec<Point>,
-    border: Vec<Point>,
-    good_border: bool,
-    center: Point,
-}
-
-impl Figure {
-    pub fn new(all_pts: &[Point], border: &[Point]) -> Self {
-        let cycle = find_cycle(border);
-        let max_dist2 = cycle
-            .iter()
-            .circular_tuple_windows()
-            .map(|(w0, w1)| w0.dist2(&w1))
-            .max()
-            .unwrap();
-        let center = find_center(&cycle);
-
-        Self {
-            all_pts: all_pts.iter().cloned().collect(),
-            border: cycle,
-            good_border: max_dist2 <= 10,
-            center,
-        }
-    }
-}
-
 struct ParsedPuzzles {
     width: usize,
     height: usize,
@@ -395,6 +175,19 @@ impl ParsedPuzzles {
         }
 
         res_figures.sort_by_key(|f| (f.center.y, f.center.x));
+
+        let f1 = &res_figures[243];
+
+        for f2_id in 0..res_figures.len() {
+            if res_figures[f2_id].good_border && res_figures[f2_id].corner_positions.len() == 4 {
+                for j in 0..4 {
+                    let result = match_borders(f1, 2, &res_figures[f2_id], j);
+                    if result.score < 50.0 {
+                        eprintln!("{}x{} -> {}", f2_id, j, result.score);
+                    }
+                }
+            }
+        }
 
         Self {
             width,
@@ -616,10 +409,51 @@ impl MyWidget {
             show_border(&self.parsed_puzzles.figures[figure_id]);
         }
 
+        {
+            let min = self.convert_to_screen(pos2(5000.0, 0.0));
+            let max = self.convert_to_screen(pos2(8000.0, 4000.0));
+            ui.painter().rect_filled(
+                Rect::from_min_max(min, max),
+                Rounding::default(),
+                Color32::WHITE,
+            );
+
+            let f1 = &self.parsed_puzzles.figures[243];
+            let f2 = &self.parsed_puzzles.figures[278];
+            for i in 0..4 {
+                for j in 0..4 {
+                    let result = match_borders(f1, i, f2, j);
+
+                    let conv_point = |p: PointF| -> Pos2 {
+                        pos2(
+                            p.x as f32 + 5000.0 + (i as f32) * 200.0,
+                            p.y as f32 + (j as f32) * 200.0,
+                        )
+                    };
+
+                    let draw = |pts: &[PointF], color: Color32| {
+                        for seg in pts.windows(2) {
+                            let p1 = conv_point(seg[0]);
+                            let p2 = conv_point(seg[1]);
+                            ui.painter().line_segment(
+                                [self.convert_to_screen(p1), self.convert_to_screen(p2)],
+                                Stroke::new(2.0, color),
+                            );
+                            ui.painter()
+                                .circle_filled(self.convert_to_screen(p1), 3.0, color);
+                        }
+                    };
+
+                    draw(&result.lhs, Color32::BLUE);
+                    draw(&result.rhs, Color32::RED);
+                    // eprintln!("{}x{} -> {}", i, j, result.score);
+                }
+            }
+        }
+
         for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
             if figure.good_border {
-                let cornre_pos = find_corners_positions(&figure.border);
-                for pos in cornre_pos.into_iter() {
+                for &pos in figure.corner_positions.iter() {
                     let p = self.convert_to_screen(figure.border[pos].pos2());
                     ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
                 }

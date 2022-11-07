@@ -1,16 +1,15 @@
-//! A good way of displaying an SVG image in egui.
-//!
-//! Requires the dependency `egui_extras` with the `svg` feature.
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use eframe::{egui, epaint::pos2};
+use eframe::egui;
 
 use crate::my_widget::MyWidget;
 
+mod border_matcher;
 mod crop;
 mod dsu;
+mod figure;
 mod my_widget;
+mod point;
 
 fn main() {
     let options = eframe::NativeOptions {
@@ -18,7 +17,7 @@ fn main() {
         ..Default::default()
     };
     eframe::run_native(
-        "svg example",
+        "jigsaw solver",
         options,
         Box::new(|_cc| Box::new(MyApp::default())),
     );
