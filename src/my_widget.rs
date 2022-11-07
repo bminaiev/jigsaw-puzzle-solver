@@ -15,9 +15,10 @@ pub struct MyWidget {
     frame: Vec<Pos2>,
     image_path: String,
     mask_image: RetainedImage,
+    parsed_puzzles: ParsedPuzzles,
 }
 
-const ZOOME_DELTA_COEF: f32 = 500.0;
+const ZOOM_DELTA_COEF: f32 = 500.0;
 
 fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError> {
     let image = image::io::Reader::open(path)?.decode()?;
@@ -110,6 +111,10 @@ impl Point {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
         dx * dx + dy * dy
+    }
+
+    pub fn pos2(&self) -> Pos2 {
+        pos2(self.x as f32, self.y as f32)
     }
 }
 
@@ -226,7 +231,6 @@ fn find_corners_positions(points: &[Point]) -> Vec<usize> {
             corners.push((i + max_pos) % dists.len());
         }
     }
-    eprintln!("corners: {:?}", corners);
     corners
 }
 
@@ -356,9 +360,10 @@ fn mid_color(pos: usize, len: usize, start: Color32, end: Color32) -> Color32 {
 impl MyWidget {
     pub fn new(path: &str) -> Self {
         let color_image = load_image_from_path(path).unwrap();
+
+        let parsed_puzzles = ParsedPuzzles::new(&color_image);
         let mask_image = {
-            let parsed = ParsedPuzzles::new(&color_image);
-            let color = parsed.gen_image();
+            let color = parsed_puzzles.gen_image();
             save_color_image(&color, "img/puzzle.jpg");
             RetainedImage::from_color_image("mask", color)
         };
@@ -377,6 +382,7 @@ impl MyWidget {
             image,
             image_path: path.to_owned(),
             mask_image,
+            parsed_puzzles,
         }
     }
 
@@ -401,14 +407,19 @@ impl MyWidget {
         }
         if let Some(mouse) = ui.input().pointer.hover_pos() {
             let real_mouse_pos = self.convert_from_screen(mouse);
-            self.zoom_log += delta / ZOOME_DELTA_COEF;
+            self.zoom_log += delta / ZOOM_DELTA_COEF;
             let zoom = self.get_zoom();
             // (real.x + offset.x) * zoom = mouse.x
             self.offset = pos2(mouse.x / zoom, mouse.y / zoom) - real_mouse_pos;
         }
     }
 
-    fn find_closest_object(&self, pts: &[Pos2], ui: &eframe::egui::Ui) -> Option<usize> {
+    fn find_closest_object(
+        &self,
+        pts: &[Pos2],
+        ui: &eframe::egui::Ui,
+        max_dist: f32,
+    ) -> Option<usize> {
         let mut options = vec![];
 
         if let Some(mouse) = ui.input().pointer.hover_pos() {
@@ -416,7 +427,7 @@ impl MyWidget {
                 let screen_p = self.convert_to_screen(p.clone());
                 let dist_to_mouse = screen_p.distance(mouse);
                 // TODO: change to const
-                if dist_to_mouse < 30.0 {
+                if dist_to_mouse < max_dist {
                     options.push((_i, dist_to_mouse));
                 }
             }
@@ -425,6 +436,27 @@ impl MyWidget {
         options.sort_by(|c1, c2| c1.1.partial_cmp(&c2.1).unwrap());
 
         options.get(0).map(|(x, _)| *x)
+    }
+
+    fn which_figure_hovered(&self, ui: &eframe::egui::Ui) -> Option<usize> {
+        let centers: Vec<_> = self
+            .parsed_puzzles
+            .figures
+            .iter()
+            .map(|f| f.center.pos2())
+            .collect();
+        let closest_figure_id = self.find_closest_object(&centers, ui, f32::MAX)?;
+        if let Some(mouse) = ui.input().pointer.hover_pos() {
+            for p in self.parsed_puzzles.figures[closest_figure_id]
+                .all_pts
+                .iter()
+            {
+                if mouse.distance(self.convert_to_screen(p.pos2())) <= 25.0 {
+                    return Some(closest_figure_id);
+                }
+            }
+        }
+        None
     }
 
     pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
@@ -479,7 +511,7 @@ impl MyWidget {
         }
 
         let drag_delta = response.drag_delta() / self.get_zoom();
-        if let Some(id) = self.find_closest_object(&self.frame, ui) {
+        if let Some(id) = self.find_closest_object(&self.frame, ui, 30.0) {
             let screen_p = self.convert_to_screen(self.frame[id]);
             ui.painter().add(Shape::circle_stroke(
                 screen_p,
@@ -490,6 +522,29 @@ impl MyWidget {
             self.frame[id] += drag_delta;
         } else {
             self.offset += drag_delta;
+        }
+
+        if let Some(figure_id) = self.which_figure_hovered(ui) {
+            let figure = &self.parsed_puzzles.figures[figure_id];
+            for i in 0..figure.border.len() {
+                let p1 = self.convert_to_screen(figure.border[i].pos2());
+                let p2 =
+                    self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
+                ui.painter().add(Shape::line_segment(
+                    [p1, p2],
+                    Stroke::new(2.0, Color32::GREEN),
+                ));
+            }
+        }
+
+        for figure in self.parsed_puzzles.figures.iter() {
+            if figure.good_border {
+                let cornre_pos = find_corners_positions(&figure.border);
+                for pos in cornre_pos.into_iter() {
+                    let p = self.convert_to_screen(figure.border[pos].pos2());
+                    ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
+                }
+            }
         }
 
         let frame = self.frame.clone();
