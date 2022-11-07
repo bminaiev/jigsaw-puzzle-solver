@@ -14,6 +14,8 @@ use rand::Rng;
 
 use crate::{crop::crop, dsu::Dsu};
 
+use itertools::Itertools;
+
 pub struct MyWidget {
     offset: Vec2,
     zoom_log: f32,
@@ -146,69 +148,41 @@ fn find_cycle(points: &[Point]) -> Vec<Point> {
             }
         }
         if let Some(next) = next {
-            let new_dist = last.dist2(&points[next]);
-            if new_dist > 2 {
-                let mut best_sum_dist = new_dist * 2;
-                let mut best_insert_pos = path.len();
-                for pos in 0..path.len() - 1 {
-                    let cur_dist =
-                        path[pos].dist2(&points[next]) + path[pos + 1].dist2(&points[next]);
-                    if cur_dist < best_sum_dist {
-                        best_sum_dist = cur_dist;
-                        best_insert_pos = pos + 1;
-                    }
-                }
-                path.insert(best_insert_pos, points[next]);
-                // eprintln!(
-                //     "inserted in pos {}/{}, dist = {}",
-                //     best_insert_pos,
-                //     path.len(),
-                //     best_sum_dist
-                // );
-            } else {
-                path.push(points[next]);
-            }
+            path.push(points[next]);
             used[next] = true;
         } else {
             break;
         }
     }
-    // TODO: optimize
+    optimize_cycle(&mut path);
     path
 }
 
+fn cycle_rev(a: &mut [Point], mut from: usize, mut len: usize) {
+    while len > 1 {
+        let end = (from + len - 1) % a.len();
+        a.swap(from, end);
+        from = (from + 1) % a.len();
+        len -= 2;
+    }
+}
+
 fn optimize_cycle(cycle: &mut Vec<Point>) {
+    // reverse a part of the cycle to minimize sum of dist^2 between neighbours
     loop {
         let mut changed = false;
         for i in 0..cycle.len() {
-            let prev = cycle[(i + cycle.len() - 1) % cycle.len()];
-            let cur = cycle[i];
-            let next = cycle[(i + 1) % cycle.len()];
-            let d_prev = cur.dist2(&prev);
-            let d_next = cur.dist2(&next);
-            let d_prev_next = prev.dist2(&next);
-            if d_prev + d_next > d_prev_next {
-                let mut bi = i;
-                let mut bsum = d_prev + d_next;
-                for j in 0..cycle.len() {
-                    if j + 1 == i {
-                        continue;
-                    }
-                    let p1 = cycle[j];
-                    let p2 = cycle[(j + 1) % cycle.len()];
-                    let check_dist = cur.dist2(&p1) + cur.dist2(&p2);
-                    if check_dist < bsum {
-                        bsum = check_dist;
-                        bi = j + 1;
-                    }
-                }
-                if bi != i {
+            for len in 2..(cycle.len() + 1) / 2 {
+                let first = cycle[i];
+                let prev = cycle[(i + cycle.len() - 1) % cycle.len()];
+                let last = cycle[(i + len - 1) % cycle.len()];
+                let next = cycle[(i + len) % cycle.len()];
+
+                let cur_dist = prev.dist2(&first) + last.dist2(&next);
+                let potential_dist = prev.dist2(&last) + first.dist2(&next);
+                if potential_dist < cur_dist {
                     changed = true;
-                    cycle.remove(i);
-                    if bi > i {
-                        bi -= 1;
-                    }
-                    cycle.insert(bi, cur);
+                    cycle_rev(cycle, i, len);
                 }
             }
         }
@@ -338,7 +312,12 @@ struct Figure {
 impl Figure {
     pub fn new(all_pts: &[Point], border: &[Point]) -> Self {
         let cycle = find_cycle(border);
-        let max_dist2 = cycle.windows(2).map(|w| w[0].dist2(&w[1])).max().unwrap();
+        let max_dist2 = cycle
+            .iter()
+            .circular_tuple_windows()
+            .map(|(w0, w1)| w0.dist2(&w1))
+            .max()
+            .unwrap();
         let center = find_center(&cycle);
 
         Self {
@@ -610,10 +589,10 @@ impl MyWidget {
             self.offset += drag_delta;
         }
 
-        if let Some(figure_id) = self.which_figure_hovered(ui) {
-            let figure = &self.parsed_puzzles.figures[figure_id];
+        let show_border = |figure: &Figure| {
             for i in 0..figure.border.len() {
                 let p1 = self.convert_to_screen(figure.border[i].pos2());
+                ui.painter().circle_filled(p1, 3.0, Color32::GREEN);
                 let p2 =
                     self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
                 ui.painter().add(Shape::line_segment(
@@ -621,6 +600,15 @@ impl MyWidget {
                     Stroke::new(2.0, Color32::GREEN),
                 ));
             }
+        };
+
+        if let Some(figure_id) = self.which_figure_hovered(ui) {
+            let figure = &self.parsed_puzzles.figures[figure_id];
+            show_border(figure);
+        }
+
+        for &figure_id in [243, 278].iter() {
+            show_border(&self.parsed_puzzles.figures[figure_id]);
         }
 
         for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
@@ -644,9 +632,9 @@ impl MyWidget {
 
         let frame = self.frame.clone();
         if ui.input().key_pressed(Key::Enter) {
-            dbg!("CROP!", &frame);
-            crop(&self.image_path, &frame);
-            dbg!("CROPED!");
+            // dbg!("CROP!", &frame);
+            // crop(&self.image_path, &frame);
+            // dbg!("CROPED!");
         }
 
         response
