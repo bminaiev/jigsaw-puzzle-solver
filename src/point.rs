@@ -22,6 +22,13 @@ impl Point {
         let dx = (other.x as f32) - (self.x as f32);
         dy.atan2(dx)
     }
+
+    pub fn conv_f64(&self) -> PointF {
+        PointF {
+            x: self.x as f64,
+            y: self.y as f64,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -31,6 +38,8 @@ pub struct PointF {
 }
 
 impl PointF {
+    pub const ZERO: Self = PointF { x: 0.0, y: 0.0 };
+
     pub fn dist2(&self, other: &Self) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;

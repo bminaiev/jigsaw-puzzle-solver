@@ -30,11 +30,62 @@ pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     score_one_side(lhs, rhs) + score_one_side(rhs, lhs)
 }
 
+#[derive(Clone)]
 pub struct MatchResult {
     pub score: f64,
     pub lhs: Vec<PointF>,
     pub rhs: Vec<PointF>,
+    pub lhs_id: usize,
+    pub rhs_id: usize,
+    pub lhs_center: PointF,
+    pub rhs_center: PointF,
     // TODO: position
+}
+
+impl MatchResult {
+    pub fn new(
+        score: f64,
+        lhs: Vec<PointF>,
+        rhs: Vec<PointF>,
+        lhs_id: usize,
+        rhs_id: usize,
+    ) -> Self {
+        let min_x = lhs
+            .iter()
+            .chain(rhs.iter())
+            .map(|p| p.x)
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap();
+        let min_y = lhs
+            .iter()
+            .chain(rhs.iter())
+            .map(|p| p.y)
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap();
+        let move_pts = |pts: Vec<PointF>| -> Vec<PointF> {
+            pts.iter()
+                .map(|p| *p - PointF { x: min_x, y: min_y })
+                .collect()
+        };
+        let find_center = |pts: &[PointF]| -> PointF {
+            let mut res = PointF::ZERO;
+            for p in pts.iter() {
+                res = res + *p;
+            }
+            res / (pts.len() as f64)
+        };
+        let lhs = move_pts(lhs);
+        let rhs = move_pts(rhs);
+        Self {
+            lhs_center: find_center(&lhs),
+            rhs_center: find_center(&rhs),
+            score,
+            lhs,
+            rhs,
+            lhs_id,
+            rhs_id,
+        }
+    }
 }
 
 fn get_figure_border(figure: &Figure, border_id: usize) -> Vec<PointF> {
@@ -43,10 +94,7 @@ fn get_figure_border(figure: &Figure, border_id: usize) -> Vec<PointF> {
     let to = figure.corner_positions[(border_id + 1) % figure.corner_positions.len()];
     loop {
         let p = figure.border[cur];
-        res.push(PointF {
-            x: p.x as f64,
-            y: p.y as f64,
-        });
+        res.push(p.conv_f64());
         if cur == to {
             break;
         }
@@ -90,6 +138,8 @@ pub fn match_borders(
     lhs_border_id: usize,
     rhs_figure: &Figure,
     rhs_border_id: usize,
+    lhs_id: usize,
+    rhs_id: usize,
 ) -> MatchResult {
     let lhs = get_figure_border(&lhs_figure, lhs_border_id);
     let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
@@ -114,9 +164,15 @@ pub fn match_borders(
 
     let rhs_moved = rhs.into_iter().map(conv_point).collect_vec();
 
-    MatchResult {
-        score: match_placed_borders(&lhs, &rhs_moved),
-        lhs,
-        rhs: rhs_moved,
-    }
+    MatchResult::new(
+        match_placed_borders(&lhs, &rhs_moved),
+        lhs_figure.border.iter().map(|p| p.conv_f64()).collect_vec(),
+        rhs_figure
+            .border
+            .iter()
+            .map(|p| conv_point(p.conv_f64()))
+            .collect_vec(),
+        lhs_id,
+        rhs_id,
+    )
 }

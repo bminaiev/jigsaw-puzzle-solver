@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{cmp::min, f32::consts::PI};
 
 use eframe::{
     egui::{Key, Sense},
@@ -13,7 +13,7 @@ use image::ImageBuffer;
 use rand::Rng;
 
 use crate::{
-    border_matcher::match_borders,
+    border_matcher::{match_borders, MatchResult},
     crop::crop,
     dsu::Dsu,
     figure::Figure,
@@ -30,6 +30,7 @@ pub struct MyWidget {
     image_path: String,
     mask_image: RetainedImage,
     parsed_puzzles: ParsedPuzzles,
+    matched_borders: Vec<Vec<MatchResult>>,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -176,19 +177,6 @@ impl ParsedPuzzles {
 
         res_figures.sort_by_key(|f| (f.center.y, f.center.x));
 
-        let f1 = &res_figures[243];
-
-        for f2_id in 0..res_figures.len() {
-            if res_figures[f2_id].good_border && res_figures[f2_id].corner_positions.len() == 4 {
-                for j in 0..4 {
-                    let result = match_borders(f1, 2, &res_figures[f2_id], j);
-                    if result.score < 50.0 {
-                        eprintln!("{}x{} -> {}", f2_id, j, result.score);
-                    }
-                }
-            }
-        }
-
         Self {
             width,
             height,
@@ -246,6 +234,7 @@ impl MyWidget {
             image_path: path.to_owned(),
             mask_image,
             parsed_puzzles,
+            matched_borders: vec![vec![]; 4],
         }
     }
 
@@ -387,14 +376,14 @@ impl MyWidget {
             self.offset += drag_delta;
         }
 
-        let show_border = |figure: &Figure| {
+        let show_border = |figure: &Figure, self_: &MyWidget| {
             for i in 0..figure.border.len() {
-                let p1 = self.convert_to_screen(figure.border[i].pos2());
+                let p1 = self_.convert_to_screen(figure.border[i].pos2());
 
                 let color = Color32::GREEN;
                 ui.painter().circle_filled(p1, 3.0, color);
                 let p2 =
-                    self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
+                    self_.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
                 ui.painter()
                     .add(Shape::line_segment([p1, p2], Stroke::new(2.0, color)));
             }
@@ -402,39 +391,72 @@ impl MyWidget {
 
         if let Some(figure_id) = self.which_figure_hovered(ui) {
             let figure = &self.parsed_puzzles.figures[figure_id];
-            show_border(figure);
+            show_border(figure, self);
+            if ui.input().pointer.primary_clicked() {
+                for i in 0..4 {
+                    self.matched_borders[i].clear();
+                    if self.parsed_puzzles.figures[figure_id].is_good_puzzle() {
+                        for other_figure_id in 0..self.parsed_puzzles.figures.len() {
+                            if other_figure_id == figure_id {
+                                continue;
+                            }
+                            let figure = &self.parsed_puzzles.figures[figure_id];
+                            let other_figure = &self.parsed_puzzles.figures[other_figure_id];
+                            if other_figure.is_good_puzzle() {
+                                for j in 0..4 {
+                                    let result = match_borders(
+                                        figure,
+                                        i,
+                                        other_figure,
+                                        j,
+                                        figure_id,
+                                        other_figure_id,
+                                    );
+                                    self.matched_borders[i].push(result);
+                                }
+                            }
+                        }
+                        self.matched_borders[i].sort_by(|a, b| a.score.total_cmp(&b.score));
+                    }
+                }
+            }
         }
 
-        for &figure_id in [243, 278].iter() {
-            show_border(&self.parsed_puzzles.figures[figure_id]);
-        }
+        let font_id = FontId::new(20.0, FontFamily::Monospace);
 
         {
-            let min = self.convert_to_screen(pos2(5000.0, 0.0));
-            let max = self.convert_to_screen(pos2(8000.0, 4000.0));
-            ui.painter().rect_filled(
-                Rect::from_min_max(min, max),
-                Rounding::default(),
-                Color32::WHITE,
-            );
+            const X_OFFSET: f32 = 3000.0;
+            const MAX_OPTIONS: usize = 20;
+            const ONE_OPTION_SIZE: f32 = 250.0;
 
-            let f1 = &self.parsed_puzzles.figures[243];
-            let f2 = &self.parsed_puzzles.figures[278];
+            {
+                let min = self.convert_to_screen(pos2(X_OFFSET, 0.0));
+                let max = self.convert_to_screen(pos2(
+                    X_OFFSET + 1000.0,
+                    (MAX_OPTIONS as f32) * ONE_OPTION_SIZE,
+                ));
+                ui.painter().rect_filled(
+                    Rect::from_min_max(min, max),
+                    Rounding::default(),
+                    Color32::WHITE,
+                );
+            }
+
             for i in 0..4 {
-                for j in 0..4 {
-                    let result = match_borders(f1, i, f2, j);
+                for j in 0..min(MAX_OPTIONS, self.matched_borders[i].len()) {
+                    let result = &self.matched_borders[i][j];
 
                     let conv_point = |p: PointF| -> Pos2 {
                         pos2(
-                            p.x as f32 + 5000.0 + (i as f32) * 200.0,
-                            p.y as f32 + (j as f32) * 200.0,
+                            p.x as f32 + X_OFFSET + (i as f32) * ONE_OPTION_SIZE + 20.0,
+                            p.y as f32 + (j as f32) * ONE_OPTION_SIZE + 20.0,
                         )
                     };
 
                     let draw = |pts: &[PointF], color: Color32| {
-                        for seg in pts.windows(2) {
-                            let p1 = conv_point(seg[0]);
-                            let p2 = conv_point(seg[1]);
+                        for (p1, p2) in pts.iter().circular_tuple_windows() {
+                            let p1 = conv_point(*p1);
+                            let p2 = conv_point(*p2);
                             ui.painter().line_segment(
                                 [self.convert_to_screen(p1), self.convert_to_screen(p2)],
                                 Stroke::new(2.0, color),
@@ -446,6 +468,27 @@ impl MyWidget {
 
                     draw(&result.lhs, Color32::BLUE);
                     draw(&result.rhs, Color32::RED);
+                    ui.painter().text(
+                        self.convert_to_screen(conv_point(result.lhs_center)),
+                        Align2::CENTER_CENTER,
+                        result.lhs_id.to_string(),
+                        font_id.clone(),
+                        Color32::BLUE,
+                    );
+                    ui.painter().text(
+                        self.convert_to_screen(conv_point(result.rhs_center)),
+                        Align2::CENTER_CENTER,
+                        result.rhs_id.to_string(),
+                        font_id.clone(),
+                        Color32::RED,
+                    );
+                    ui.painter().text(
+                        self.convert_to_screen(conv_point(PointF::ZERO)),
+                        Align2::LEFT_TOP,
+                        format!("score = {:.3}", result.score),
+                        font_id.clone(),
+                        Color32::BLACK,
+                    );
                     // eprintln!("{}x{} -> {}", i, j, result.score);
                 }
             }

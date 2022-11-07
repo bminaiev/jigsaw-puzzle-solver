@@ -206,4 +206,8 @@ impl Figure {
             center,
         }
     }
+
+    pub fn is_good_puzzle(&self) -> bool {
+        self.good_border && self.corner_positions.len() == 4
+    }
 }
