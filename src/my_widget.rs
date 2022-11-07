@@ -155,6 +155,11 @@ fn find_cycle(points: &[Point]) -> Vec<Point> {
         }
     }
     optimize_cycle(&mut path);
+    let area = calc_signed_area(&path);
+    if area > 0.0 {
+        // make counter-clock-wise
+        path.reverse();
+    }
     path
 }
 
@@ -203,14 +208,14 @@ fn find_center(points: &[Point]) -> Point {
     }
 }
 
-fn calc_area(pts: &[Point]) -> f32 {
+fn calc_signed_area(pts: &[Point]) -> f32 {
     let mut res = 0.0;
     for i in 0..pts.len() {
         let p1 = pts[i];
         let p2 = pts[(i + 1) % pts.len()];
         res += (p1.x as f32) * (p2.y as f32) - (p1.y as f32) * (p2.x as f32);
     }
-    res.abs()
+    res
 }
 
 fn fmax(x: f32, y: f32) -> f32 {
@@ -592,13 +597,13 @@ impl MyWidget {
         let show_border = |figure: &Figure| {
             for i in 0..figure.border.len() {
                 let p1 = self.convert_to_screen(figure.border[i].pos2());
-                ui.painter().circle_filled(p1, 3.0, Color32::GREEN);
+
+                let color = Color32::GREEN;
+                ui.painter().circle_filled(p1, 3.0, color);
                 let p2 =
                     self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
-                ui.painter().add(Shape::line_segment(
-                    [p1, p2],
-                    Stroke::new(2.0, Color32::GREEN),
-                ));
+                ui.painter()
+                    .add(Shape::line_segment([p1, p2], Stroke::new(2.0, color)));
             }
         };
 
