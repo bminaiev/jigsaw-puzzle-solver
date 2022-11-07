@@ -2,7 +2,11 @@ use std::f32::consts::PI;
 
 use eframe::{
     egui::{Key, Sense},
-    epaint::{pos2, vec2, CircleShape, Color32, ColorImage, Mesh, Pos2, Rect, Shape, Stroke, Vec2},
+    emath::Align2,
+    epaint::{
+        pos2, vec2, CircleShape, Color32, ColorImage, FontFamily, FontId, Mesh, Pos2, Rect, Shape,
+        Stroke, Vec2,
+    },
 };
 use egui_extras::RetainedImage;
 use image::ImageBuffer;
@@ -406,6 +410,8 @@ impl ParsedPuzzles {
             res_figures.push(Figure::new(&figures_inside[i], &figures_borders[i]));
         }
 
+        res_figures.sort_by_key(|f| (f.center.y, f.center.x));
+
         Self {
             width,
             height,
@@ -430,20 +436,11 @@ impl ParsedPuzzles {
             for p in figure.border.iter() {
                 res[(p.x, p.y)] = border_color;
             }
-            res[(figure.center.x, figure.center.y)] = Color32::BLUE;
+            // res[(figure.center.x, figure.center.y)] = Color32::BLUE;
         }
 
         res
     }
-}
-
-fn mid_color(pos: usize, len: usize, start: Color32, end: Color32) -> Color32 {
-    let calc =
-        |l: u8, r: u8| -> u8 { (((l as usize) * (len - pos - 1) + (r as usize) * pos) / len) as _ };
-    let r = calc(start.r(), end.r());
-    let g = calc(start.g(), end.g());
-    let b = calc(start.b(), end.b());
-    Color32::from_rgb(r, g, b)
 }
 
 impl MyWidget {
@@ -626,13 +623,22 @@ impl MyWidget {
             }
         }
 
-        for figure in self.parsed_puzzles.figures.iter() {
+        for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
             if figure.good_border {
                 let cornre_pos = find_corners_positions(&figure.border);
                 for pos in cornre_pos.into_iter() {
                     let p = self.convert_to_screen(figure.border[pos].pos2());
                     ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
                 }
+
+                let center = self.convert_to_screen(figure.center.pos2());
+                ui.painter().text(
+                    center,
+                    Align2::CENTER_CENTER,
+                    figure_id.to_string(),
+                    FontId::new(20.0, FontFamily::Monospace),
+                    Color32::BLACK,
+                );
             }
         }
 
