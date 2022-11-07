@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use eframe::{
     egui::{Key, Sense},
     epaint::{pos2, vec2, CircleShape, Color32, ColorImage, Mesh, Pos2, Rect, Shape, Stroke, Vec2},
@@ -116,6 +118,12 @@ impl Point {
     pub fn pos2(&self) -> Pos2 {
         pos2(self.x as f32, self.y as f32)
     }
+
+    pub fn angle_to(&self, other: &Self) -> f32 {
+        let dy = (other.y as f32) - (self.y as f32);
+        let dx = (other.x as f32) - (self.x as f32);
+        dy.atan2(dx)
+    }
 }
 
 fn find_cycle(points: &[Point]) -> Vec<Point> {
@@ -217,6 +225,87 @@ fn find_center(points: &[Point]) -> Point {
     }
 }
 
+fn calc_area(pts: &[Point]) -> f32 {
+    let mut res = 0.0;
+    for i in 0..pts.len() {
+        let p1 = pts[i];
+        let p2 = pts[(i + 1) % pts.len()];
+        res += (p1.x as f32) * (p2.y as f32) - (p1.y as f32) * (p2.x as f32);
+    }
+    res.abs()
+}
+
+fn fmax(x: f32, y: f32) -> f32 {
+    if x > y {
+        x
+    } else {
+        y
+    }
+}
+
+fn fmin(x: f32, y: f32) -> f32 {
+    if x < y {
+        x
+    } else {
+        y
+    }
+}
+
+fn filter_4_corners(all: &[Point], idxs: &[usize]) -> Vec<usize> {
+    let mut best_score = f32::MAX;
+    let n = idxs.len();
+    let mut best = vec![];
+
+    fn norm_angle(mut a: f32) -> f32 {
+        while a < 0.0 {
+            a += PI * 2.0;
+        }
+        while a >= PI * 2.0 {
+            a -= PI * 2.0;
+        }
+        fmin(a, PI * 2.0 - a)
+    }
+
+    fn find_angle(p1: Point, p2: Point, p3: Point) -> f32 {
+        let a1 = p1.angle_to(&p2);
+        let a2 = p2.angle_to(&p3);
+        norm_angle(a1 - a2)
+    }
+
+    fn angle_score(a: f32) -> f32 {
+        (PI / 2.0 - a).abs()
+    }
+
+    let calc_score = |pts: &[Point]| -> f32 {
+        let sum_angles: f32 = (0..4)
+            .map(|i| angle_score(find_angle(pts[i], pts[(i + 1) % 4], pts[(i + 2) % 4])))
+            .sum();
+
+        let dists: Vec<_> = (0..4).map(|i| pts[i].dist2(&pts[(i + 1) % 4])).collect();
+        let max_dist = *dists.iter().max().unwrap();
+        let min_dist = *dists.iter().min().unwrap();
+        let dist_coef = (max_dist as f32) / (min_dist as f32);
+
+        sum_angles * dist_coef
+    };
+
+    for i1 in 0..n {
+        for i2 in i1 + 1..n {
+            for i3 in i2 + 1..n {
+                for i4 in i3 + 1..n {
+                    let pts = [all[idxs[i1]], all[idxs[i2]], all[idxs[i3]], all[idxs[i4]]];
+                    let score = calc_score(&pts);
+                    if score < best_score {
+                        best_score = score;
+                        best = vec![idxs[i1], idxs[i2], idxs[i3], idxs[i4]];
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 fn find_corners_positions(points: &[Point]) -> Vec<usize> {
     let center = find_center(points);
     let dists: Vec<_> = points.iter().map(|p| p.dist2(&center)).collect();
@@ -231,7 +320,7 @@ fn find_corners_positions(points: &[Point]) -> Vec<usize> {
             corners.push((i + max_pos) % dists.len());
         }
     }
-    corners
+    filter_4_corners(&points, &corners)
 }
 
 #[derive(Clone)]
