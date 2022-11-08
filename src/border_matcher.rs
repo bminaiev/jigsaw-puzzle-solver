@@ -14,7 +14,8 @@ pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     // Then we calculate the average of all points.
 
     let score_one_side = |lhs: &[PointF], rhs: &[PointF]| -> f64 {
-        lhs.iter()
+        let dists = lhs
+            .iter()
             .map(|p| {
                 let min_dist = rhs
                     .iter()
@@ -23,8 +24,9 @@ pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
                     .unwrap();
                 (min_dist - expected_dist2).abs()
             })
-            .sum::<f64>()
-            / (lhs.len() as f64)
+            .collect_vec();
+        let av = dists.iter().sum::<f64>() / (dists.len() as f64);
+        dists.iter().map(|d| (d - av) * (d - av)).sum::<f64>() / (dists.len() as f64)
     };
 
     score_one_side(lhs, rhs) + score_one_side(rhs, lhs)
@@ -150,7 +152,7 @@ pub fn match_borders(
     let dir = x_dir.rotate_ccw90().norm();
 
     // TODO: 5.0 is not a bullet-proof solution.
-    let start_mid = mid; //+ (dir * 5.0);
+    let start_mid = mid + (dir * 5.0);
 
     let to_cs = CoordinateSystem::new(start_mid, x_dir);
 
