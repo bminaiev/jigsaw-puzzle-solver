@@ -21,15 +21,11 @@ mod tests {
                 let other_figure = &parsed_puzzles.figures[other_figure_id];
                 if other_figure.is_good_puzzle() {
                     for j in 0..4 {
-                        let result = match_borders(
-                            figure,
-                            b_id,
-                            other_figure,
-                            j,
-                            figure_id,
-                            other_figure_id,
-                        );
-                        options.push(result);
+                        if let Some(result) =
+                            match_borders(figure, b_id, other_figure, j, figure_id, other_figure_id)
+                        {
+                            options.push(result);
+                        }
                     }
                 }
             }

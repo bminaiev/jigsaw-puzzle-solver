@@ -1,32 +1,35 @@
+use std::cmp::min;
+
 use itertools::Itertools;
 
-use crate::{figure::Figure, point::PointF};
+use crate::{
+    figure::Figure,
+    point::{find_center, PointF},
+};
 
 // smaller -> better
 pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     // TODO: smarter logic
-    let expected_dist2 =
-        (lhs[0].dist2(&rhs[0]) + lhs.last().unwrap().dist2(&rhs.last().unwrap())) / 2.0;
 
-    // For each point from each side, we find the closest point from the other side, and check
-    // how much it differs from `expected_dist2`.
-    //
-    // Then we calculate the average of all points.
-
+    const CHECK_NEXT: usize = 5;
     let score_one_side = |lhs: &[PointF], rhs: &[PointF]| -> f64 {
-        let dists = lhs
-            .iter()
-            .map(|p| {
-                let min_dist = rhs
-                    .iter()
-                    .map(|other| p.dist2(other))
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
-                (min_dist - expected_dist2).abs()
-            })
-            .collect_vec();
-        let av = dists.iter().sum::<f64>() / (dists.len() as f64);
-        dists.iter().map(|d| (d - av) * (d - av)).sum::<f64>() / (dists.len() as f64)
+        let mut iter = 0;
+        let mut sum_dists = 0.0;
+        for p in lhs.iter() {
+            let dists = rhs[iter..min(iter + CHECK_NEXT, rhs.len())]
+                .iter()
+                .map(|rhs_p| p.dist2(rhs_p))
+                .collect_vec();
+            let mut min_shift = 0;
+            for i in 0..dists.len() {
+                if dists[i] < dists[min_shift] {
+                    min_shift = i;
+                }
+            }
+            iter += min_shift;
+            sum_dists += dists[min_shift];
+        }
+        sum_dists / (lhs.len() as f64)
     };
 
     score_one_side(lhs, rhs) + score_one_side(rhs, lhs)
@@ -69,13 +72,7 @@ impl MatchResult {
                 .map(|p| *p - PointF { x: min_x, y: min_y })
                 .collect()
         };
-        let find_center = |pts: &[PointF]| -> PointF {
-            let mut res = PointF::ZERO;
-            for p in pts.iter() {
-                res = res + *p;
-            }
-            res / (pts.len() as f64)
-        };
+
         let lhs = move_pts(lhs);
         let rhs = move_pts(rhs);
         Self {
@@ -113,6 +110,7 @@ struct CoordinateSystem {
 
 impl CoordinateSystem {
     pub fn new(start: PointF, x_dir: PointF) -> Self {
+        assert!(x_dir.len2() != 0.0);
         let x_dir = x_dir.norm();
         let y_dir = x_dir.rotate_ccw90();
         Self {
@@ -135,6 +133,77 @@ impl CoordinateSystem {
     }
 }
 
+fn estimate_coordinate_system_by_border(border: &[PointF]) -> Option<CoordinateSystem> {
+    const OFFSET: usize = 5;
+    if border.len() <= OFFSET * 2 + 3 {
+        return None;
+    }
+    let mid = border.len() / 2;
+    let p1 = find_center(&border[OFFSET..mid]);
+    let p2 = find_center(&border[mid..border.len() - OFFSET]);
+    if p1 == p2 {
+        return None;
+    }
+    Some(CoordinateSystem::new(p1, p2 - p1))
+}
+
+fn local_optimize_coordinate_system(
+    start_cs: CoordinateSystem,
+    mut scorer: impl FnMut(&CoordinateSystem) -> f64,
+) -> CoordinateSystem {
+    let start_score = scorer(&start_cs);
+    let mut last_score = start_score;
+    // TODO: optimize this.
+    if last_score > 100.0 {
+        return start_cs;
+    }
+    // TODO: think about constants
+    let mut start_coord_step = 10.0;
+    let mut dir_step = 0.1;
+    const MIN_EPS: f64 = 1e-2;
+    const MULT: f64 = 0.3;
+    let moves = vec![
+        PointF { x: 1.0, y: 0.0 },
+        PointF { x: -1.0, y: 0.0 },
+        PointF { x: 0.0, y: 1.0 },
+        PointF { x: 0.0, y: -1.0 },
+    ];
+    let mut cs = start_cs;
+    while start_coord_step > MIN_EPS || dir_step > MIN_EPS {
+        {
+            let mut changed = false;
+            for mv in moves.iter() {
+                let ncs = CoordinateSystem::new(cs.start + *mv * start_coord_step, cs.x_dir);
+                let new_score = scorer(&ncs);
+                if new_score < last_score {
+                    changed = true;
+                    last_score = new_score;
+                    cs = ncs;
+                }
+            }
+            if !changed {
+                start_coord_step *= MULT;
+            }
+        }
+        {
+            let mut changed = false;
+            for mv in moves.iter() {
+                let ncs = CoordinateSystem::new(cs.start, cs.x_dir + *mv * dir_step);
+                let new_score = scorer(&ncs);
+                if new_score < last_score {
+                    changed = true;
+                    last_score = new_score;
+                    cs = ncs;
+                }
+            }
+            if !changed {
+                dir_step *= MULT;
+            }
+        }
+    }
+    cs
+}
+
 pub fn match_borders(
     lhs_figure: &Figure,
     lhs_border_id: usize,
@@ -142,39 +211,34 @@ pub fn match_borders(
     rhs_border_id: usize,
     lhs_id: usize,
     rhs_id: usize,
-) -> MatchResult {
+) -> Option<MatchResult> {
     let lhs = get_figure_border(&lhs_figure, lhs_border_id);
     let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
     rhs.reverse();
 
-    let mid = (lhs[0] + *lhs.last().unwrap()) / 2.0;
-    let x_dir = *lhs.last().unwrap() - lhs[0];
-    let dir = x_dir.rotate_ccw90().norm();
+    let to_cs = estimate_coordinate_system_by_border(&lhs)?;
+    let from_cs_estimation = estimate_coordinate_system_by_border(&rhs)?;
 
-    // TODO: 5.0 is not a bullet-proof solution.
-    let start_mid = mid + (dir * 5.0);
+    let conv_point =
+        |from_cs: &CoordinateSystem, p: PointF| -> PointF { to_cs.to_real(from_cs.create(p)) };
 
-    let to_cs = CoordinateSystem::new(start_mid, x_dir);
-
-    let rhs_mid = (rhs[0] + *rhs.last().unwrap()) / 2.0;
-    let from_cs = CoordinateSystem::new(rhs_mid, *rhs.last().unwrap() - rhs[0]);
-
-    let conv_point = |p: PointF| -> PointF {
-        let in_system = from_cs.create(p);
-        to_cs.to_real(in_system)
+    let move_rhs = |from_cs: &CoordinateSystem| -> Vec<PointF> {
+        rhs.iter().map(|p| conv_point(from_cs, *p)).collect_vec()
     };
+    let from_cs = local_optimize_coordinate_system(from_cs_estimation, |from_cs| {
+        match_placed_borders(&lhs, &move_rhs(from_cs))
+    });
 
-    let rhs_moved = rhs.into_iter().map(conv_point).collect_vec();
-
-    MatchResult::new(
-        match_placed_borders(&lhs, &rhs_moved),
+    let res = MatchResult::new(
+        match_placed_borders(&lhs, &move_rhs(&from_cs)),
         lhs_figure.border.iter().map(|p| p.conv_f64()).collect_vec(),
         rhs_figure
             .border
             .iter()
-            .map(|p| conv_point(p.conv_f64()))
+            .map(|p| conv_point(&from_cs, p.conv_f64()))
             .collect_vec(),
         lhs_id,
         rhs_id,
-    )
+    );
+    Some(res)
 }

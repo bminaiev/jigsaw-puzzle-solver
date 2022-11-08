@@ -244,15 +244,16 @@ impl MyWidget {
                             let other_figure = &self.parsed_puzzles.figures[other_figure_id];
                             if other_figure.is_good_puzzle() {
                                 for j in 0..4 {
-                                    let result = match_borders(
+                                    if let Some(result) = match_borders(
                                         figure,
                                         i,
                                         other_figure,
                                         j,
                                         figure_id,
                                         other_figure_id,
-                                    );
-                                    self.matched_borders[i].push(result);
+                                    ) {
+                                        self.matched_borders[i].push(result);
+                                    }
                                 }
                             }
                         }

@@ -1,5 +1,6 @@
-use std::f32::consts::PI;
+use std::{collections::VecDeque, f32::consts::PI};
 
+use eframe::epaint::ahash::{HashMap, HashMapExt};
 use itertools::Itertools;
 
 use crate::point::Point;
@@ -187,9 +188,42 @@ fn find_corners_positions(points: &[Point]) -> Vec<usize> {
     filter_4_corners(&points, &corners)
 }
 
+fn bfs(pts: &[Point], max_dist: usize) -> HashMap<Point, usize> {
+    let mut res = HashMap::new();
+    let mut queue = VecDeque::new();
+    for p in pts.iter() {
+        res.insert(*p, 0);
+        queue.push_back(*p);
+    }
+    while let Some(p) = queue.pop_front() {
+        let cur_dist = res[&p];
+        if cur_dist == max_dist {
+            continue;
+        }
+        for next in p.neighbours() {
+            if !res.contains_key(&next) {
+                res.insert(next, cur_dist + 1);
+                queue.push_back(next);
+            }
+        }
+    }
+    res
+}
+
 impl Figure {
-    pub fn new(all_pts: &[Point], border: &[Point]) -> Self {
-        let cycle = find_cycle(border);
+    pub fn new(pts: &[Point]) -> Option<Self> {
+        const MAX_DIST: usize = 2;
+        let dist_by_pts = bfs(pts, MAX_DIST);
+        let border = dist_by_pts
+            .iter()
+            .filter_map(|(&k, &v)| if v == MAX_DIST { Some(k) } else { None })
+            .collect_vec();
+
+        if border.len() <= 50 {
+            return None;
+        }
+
+        let cycle = find_cycle(&border);
         let max_dist2 = cycle
             .iter()
             .circular_tuple_windows()
@@ -198,13 +232,14 @@ impl Figure {
             .unwrap();
         let center = find_center(&cycle);
 
-        Self {
-            all_pts: all_pts.iter().cloned().collect(),
+        let res = Self {
+            all_pts: dist_by_pts.keys().cloned().collect_vec(),
             corner_positions: find_corners_positions(&cycle),
             border: cycle,
             good_border: max_dist2 <= 10,
             center,
-        }
+        };
+        Some(res)
     }
 
     pub fn is_good_puzzle(&self) -> bool {

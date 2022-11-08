@@ -13,63 +13,6 @@ fn is_puzzle_color(color: Color32) -> bool {
     (color.r() as usize) + (color.g() as usize) + (color.b() as usize) >= 630
 }
 
-fn calc_dist_to_not_puzzle(
-    width: usize,
-    height: usize,
-    mut id: impl FnMut(usize, usize) -> usize,
-    is_puzzle: &[bool],
-) -> Vec<usize> {
-    let mut dist_to_not_puzzle = vec![std::usize::MAX / 2; width * height];
-
-    fn update_min(with: usize, place: &mut usize) {
-        if *place > with {
-            *place = with;
-        }
-    }
-
-    for x in 0..width {
-        for y in 0..height {
-            if is_puzzle[id(x, y)] {
-                if x > 0 {
-                    update_min(
-                        1 + dist_to_not_puzzle[id(x - 1, y)],
-                        &mut dist_to_not_puzzle[id(x, y)],
-                    );
-                }
-                if y > 0 {
-                    update_min(
-                        1 + dist_to_not_puzzle[id(x, y - 1)],
-                        &mut dist_to_not_puzzle[id(x, y)],
-                    );
-                }
-            } else {
-                dist_to_not_puzzle[id(x, y)] = 0;
-            }
-        }
-    }
-    for x in (0..width).rev() {
-        for y in (0..height).rev() {
-            if is_puzzle[id(x, y)] {
-                if x + 1 < width {
-                    update_min(
-                        1 + dist_to_not_puzzle[id(x + 1, y)],
-                        &mut dist_to_not_puzzle[id(x, y)],
-                    );
-                }
-                if y + 1 < height {
-                    update_min(
-                        1 + dist_to_not_puzzle[id(x, y + 1)],
-                        &mut dist_to_not_puzzle[id(x, y)],
-                    );
-                }
-            } else {
-                dist_to_not_puzzle[id(x, y)] = 0;
-            }
-        }
-    }
-    dist_to_not_puzzle
-}
-
 impl ParsedPuzzles {
     pub fn new(color_image: &ColorImage) -> Self {
         let width = color_image.size[0];
@@ -86,8 +29,6 @@ impl ParsedPuzzles {
             }
         }
 
-        let dist_to_not_puzzle = calc_dist_to_not_puzzle(width, height, id, &is_puzzle);
-
         let mut dsu = Dsu::new(width * height);
         for x in 0..width {
             for y in 0..height {
@@ -102,26 +43,21 @@ impl ParsedPuzzles {
             }
         }
 
-        let mut figures_borders = vec![vec![]; width * height];
-        let mut figures_inside = vec![vec![]; width * height];
+        let mut dsu_figures = vec![vec![]; width * height];
         for x in 0..width {
             for y in 0..height {
                 if is_puzzle[id(x, y)] {
-                    if dist_to_not_puzzle[id(x, y)] == 1 {
-                        figures_borders[dsu.get(id(x, y))].push(Point { x, y });
-                    }
-                    figures_inside[dsu.get(id(x, y))].push(Point { x, y });
+                    dsu_figures[dsu.get(id(x, y))].push(Point { x, y });
                 }
             }
         }
 
         let mut res_figures = vec![];
 
-        for i in 0..figures_borders.len() {
-            if figures_borders[i].len() < 20 {
-                continue;
+        for i in 0..dsu_figures.len() {
+            if let Some(figure) = Figure::new(&dsu_figures[i]) {
+                res_figures.push(figure);
             }
-            res_figures.push(Figure::new(&figures_inside[i], &figures_borders[i]));
         }
 
         res_figures.sort_by_key(|f| (f.center.y, f.center.x));

@@ -1,6 +1,6 @@
 use eframe::epaint::{pos2, Pos2};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct Point {
     pub x: usize,
     pub y: usize,
@@ -29,9 +29,35 @@ impl Point {
             y: self.y as f64,
         }
     }
+
+    pub fn neighbours(&self) -> Vec<Self> {
+        let mut res = vec![
+            Point {
+                x: self.x + 1,
+                y: self.y,
+            },
+            Point {
+                x: self.x,
+                y: self.y + 1,
+            },
+        ];
+        if self.x > 0 {
+            res.push(Point {
+                x: self.x - 1,
+                y: self.y,
+            });
+        }
+        if self.y > 0 {
+            res.push(Point {
+                x: self.x,
+                y: self.y - 1,
+            });
+        }
+        res
+    }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointF {
     pub x: f64,
     pub y: f64,
@@ -116,4 +142,12 @@ impl std::ops::Sub for PointF {
             y: self.y - rhs.y,
         }
     }
+}
+
+pub fn find_center(pts: &[PointF]) -> PointF {
+    let mut res = PointF::ZERO;
+    for p in pts.iter() {
+        res = res + *p;
+    }
+    res / (pts.len() as f64)
 }
