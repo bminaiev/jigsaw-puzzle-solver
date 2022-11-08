@@ -8,8 +8,11 @@ mod border_matcher;
 mod crop;
 mod dsu;
 mod figure;
+mod matcher_tests;
 mod my_widget;
+mod parsed_puzzles;
 mod point;
+mod utils;
 
 fn main() {
     let options = eframe::NativeOptions {
