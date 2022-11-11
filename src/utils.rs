@@ -7,3 +7,41 @@ pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError>
     let pixels = image_buffer.as_flat_samples();
     Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
 }
+
+// TODO: move to a separate file
+#[derive(Copy, Clone, Debug)]
+pub struct Side {
+    pub fig: usize,
+    pub side: usize,
+}
+
+fn norm_side(x: usize) -> usize {
+    if x >= 4 {
+        x - 4
+    } else {
+        x
+    }
+}
+
+impl Side {
+    pub fn ne(&self) -> Self {
+        Self {
+            fig: self.fig,
+            side: norm_side(self.side + 1),
+        }
+    }
+
+    pub fn ne2(&self) -> Self {
+        Self {
+            fig: self.fig,
+            side: norm_side(self.side + 2),
+        }
+    }
+
+    pub fn pr(&self) -> Self {
+        Self {
+            fig: self.fig,
+            side: norm_side(self.side + 3),
+        }
+    }
+}
