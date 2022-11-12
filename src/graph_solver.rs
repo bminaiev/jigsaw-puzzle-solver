@@ -15,6 +15,7 @@ use crate::{
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
     point::{Point, PointF},
+    rects_fitter::{self, RectsFitter},
     utils::Side,
 };
 
@@ -71,31 +72,6 @@ impl MoveCS {
     }
 }
 
-fn shift_everything(positions: &mut [Option<Vec<PointF>>]) {
-    let all_pts = positions.iter().flatten().flatten().collect_vec();
-    let min_x = all_pts
-        .iter()
-        .map(|p| p.x)
-        .min_by(|a, b| a.total_cmp(b))
-        .unwrap();
-    let min_y = all_pts
-        .iter()
-        .map(|p| p.y)
-        .min_by(|a, b| a.total_cmp(b))
-        .unwrap();
-    for list in positions.iter_mut() {
-        if let Some(list) = list {
-            for p in list.iter_mut() {
-                *p = *p
-                    - PointF {
-                        x: min_x - 50.0,
-                        y: min_y - 50.0,
-                    };
-            }
-        }
-    }
-}
-
 fn place_on_surface(
     graph: &Graph,
     placement: &Placement,
@@ -115,6 +91,7 @@ fn place_on_surface(
             tree_edges[s2.fig].push((s2, s1));
         }
     }
+    let mut rects_fitter = RectsFitter::new();
     let mut positions: Vec<Option<Vec<PointF>>> = vec![None; graph.n];
     // TODO: smarter logic for root choosing
     for root in 0..positions.len() {
@@ -126,7 +103,9 @@ fn place_on_surface(
         positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
         let mut queue = VecDeque::new();
         queue.push_back(root);
+        let mut cur_component = vec![];
         while let Some(v) = queue.pop_front() {
+            cur_component.push(v);
             for (s1, s2) in tree_edges[v].iter() {
                 if positions[s2.fig].is_some() {
                     continue;
@@ -159,8 +138,21 @@ fn place_on_surface(
                 );
             }
         }
+        {
+            let new_pts = cur_component
+                .iter()
+                .map(|&id| positions[id].as_ref().unwrap())
+                .cloned()
+                .flatten()
+                .collect_vec();
+            let shift = rects_fitter.add_points(&new_pts);
+            for &fig in cur_component.iter() {
+                for p in positions[fig].as_mut().unwrap() {
+                    *p = *p + shift
+                }
+            }
+        }
     }
-    shift_everything(&mut positions);
     positions
 }
 
@@ -171,6 +163,10 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<
     edges.sort_by(|e1, e2| e1.score.total_cmp(&e2.score));
     let mut placement = Placement::new(graph.n);
     for e in edges.iter() {
+        if e.score > 2.0 {
+            break;
+        }
+
         if placement
             .join_sides(
                 Side {

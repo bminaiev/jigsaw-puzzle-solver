@@ -21,6 +21,7 @@ mod my_widget;
 mod parsed_puzzles;
 mod placement;
 mod point;
+mod rects_fitter;
 mod utils;
 
 const PATH: &str = "img/crop_only_white.jpg";
