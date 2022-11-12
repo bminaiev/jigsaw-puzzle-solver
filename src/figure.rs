@@ -1,11 +1,13 @@
-use std::{collections::VecDeque, f32::consts::PI};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    f32::consts::PI,
+};
 
-use eframe::epaint::ahash::{HashMap, HashMapExt};
 use itertools::Itertools;
 
 use crate::point::Point;
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct Figure {
     pub all_pts: Vec<Point>,
     pub border: Vec<Point>,
@@ -188,8 +190,8 @@ fn find_corners_positions(points: &[Point]) -> Vec<usize> {
     filter_4_corners(&points, &corners)
 }
 
-fn bfs(pts: &[Point], max_dist: usize) -> HashMap<Point, usize> {
-    let mut res = HashMap::new();
+fn bfs(pts: &[Point], max_dist: usize) -> BTreeMap<Point, usize> {
+    let mut res = BTreeMap::new();
     let mut queue = VecDeque::new();
     for p in pts.iter() {
         res.insert(*p, 0);

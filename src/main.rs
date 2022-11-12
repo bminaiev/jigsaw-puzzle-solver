@@ -6,11 +6,12 @@ use eframe::egui;
 
 use crate::{
     borders_graph::Graph, graph_solver::solve_graph, my_widget::MyWidget,
-    parsed_puzzles::ParsedPuzzles, utils::load_image_from_path,
+    parsed_puzzles::ParsedPuzzles, point::PointF, utils::load_image_from_path,
 };
 
 mod border_matcher;
 mod borders_graph;
+mod coordinate_system;
 mod crop;
 mod dsu;
 mod figure;
@@ -24,7 +25,8 @@ mod utils;
 
 const PATH: &str = "img/crop_only_white.jpg";
 
-fn main_ui() {
+// TODO: nicer type
+fn main_ui(positions: Vec<Option<Vec<PointF>>>) {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(1400.0, 1100.0)),
         ..Default::default()
@@ -32,7 +34,7 @@ fn main_ui() {
     eframe::run_native(
         "jigsaw solver",
         options,
-        Box::new(|_cc| Box::new(MyApp::default())),
+        Box::new(|_cc| Box::new(MyApp::new(positions, false))),
     );
 }
 
@@ -44,11 +46,13 @@ fn main_build_graph() {
 }
 
 fn main_load_graph() {
-    // let color_image = load_image_from_path(PATH).unwrap();
-    // let parsed_puzzles = ParsedPuzzles::new(&color_image);
+    let color_image = load_image_from_path(PATH).unwrap();
+    let parsed_puzzles = ParsedPuzzles::new(&color_image);
     let graph: Graph = serde_json::from_str(&fs::read_to_string("graph.json").unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
-    solve_graph(&graph);
+    let positions = solve_graph(&graph, &parsed_puzzles);
+    eprintln!("positions generated!");
+    main_ui(positions);
 }
 
 fn main() {
@@ -60,10 +64,10 @@ struct MyApp {
     my_widget: MyWidget,
 }
 
-impl Default for MyApp {
-    fn default() -> Self {
+impl MyApp {
+    fn new(positions: Vec<Option<Vec<PointF>>>, show_parsed: bool) -> Self {
         Self {
-            my_widget: MyWidget::new(PATH),
+            my_widget: MyWidget::new(PATH, positions, show_parsed),
         }
     }
 }

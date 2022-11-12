@@ -33,6 +33,9 @@ pub struct MyWidget {
     mask_image: RetainedImage,
     parsed_puzzles: ParsedPuzzles,
     matched_borders: Vec<Vec<MatchResult>>,
+    positions: Vec<Option<Vec<PointF>>>,
+    show_parsed: bool,
+    fig_colors: Vec<Color32>,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -49,7 +52,7 @@ fn save_color_image(color_image: &ColorImage, path: &str) {
 }
 
 impl MyWidget {
-    pub fn new(path: &str) -> Self {
+    pub fn new(path: &str, positions: Vec<Option<Vec<PointF>>>, show_parsed: bool) -> Self {
         let color_image = load_image_from_path(path).unwrap();
 
         let parsed_puzzles = ParsedPuzzles::new(&color_image);
@@ -61,6 +64,10 @@ impl MyWidget {
 
         let image = RetainedImage::from_color_image("test", color_image);
         let img_size = image.size_vec2();
+        let mut rng = rand::thread_rng();
+        let fig_colors = (0..positions.len())
+            .map(|_| Color32::from_rgb(rng.gen(), rng.gen(), rng.gen()))
+            .collect_vec();
         Self {
             offset: vec2(0.0, 0.0),
             zoom_log: -1.0,
@@ -75,6 +82,9 @@ impl MyWidget {
             mask_image,
             parsed_puzzles,
             matched_borders: vec![vec![]; 4],
+            positions,
+            show_parsed,
+            fig_colors,
         }
     }
 
@@ -151,18 +161,34 @@ impl MyWidget {
         None
     }
 
-    pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
-        // {
-        //     ui.painter()
-        //         .add(Shape::rect_filled(rect, Rounding::none(), Color32::YELLOW));
-        // }
-        {
-            self.change_zoom(ui);
+    fn show_border(&self, figure: &Figure, ui: &mut eframe::egui::Ui) {
+        for i in 0..figure.border.len() {
+            let p1 = self.convert_to_screen(figure.border[i].pos2());
+
+            let color = Color32::GREEN;
+            ui.painter().circle_filled(p1, 3.0, color);
+            let p2 = self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
+            ui.painter()
+                .add(Shape::line_segment([p1, p2], Stroke::new(2.0, color)));
+        }
+    }
+
+    fn show_white_background(&mut self, ui: &mut eframe::egui::Ui) {
+        let img_size = self.image.size_vec2();
+        let min = self.convert_to_screen(pos2(0.0, 0.0));
+        let max = self.convert_to_screen(pos2(img_size.x, img_size.y));
+        let rect = Rect::from_min_max(min, max);
+        ui.painter()
+            .rect_filled(rect, Rounding::default(), Color32::WHITE);
+    }
+
+    fn show_parsed(&mut self, ui: &mut eframe::egui::Ui) {
+        if !self.show_parsed {
+            return;
         }
 
-        let img_size = self.image.size_vec2();
         {
+            let img_size = self.image.size_vec2();
             let min = self.convert_to_screen(pos2(0.0, 0.0));
             let max = self.convert_to_screen(pos2(img_size.x, img_size.y));
             let rect = Rect::from_min_max(min, max);
@@ -182,6 +208,54 @@ impl MyWidget {
                 ui.painter().add(Shape::mesh(mesh2));
             }
         }
+
+        if let Some(figure_id) = self.which_figure_hovered(ui) {
+            let figure = &self.parsed_puzzles.figures[figure_id];
+            self.show_border(figure, ui);
+            if ui.input().pointer.primary_clicked() {
+                for i in 0..4 {
+                    self.matched_borders[i].clear();
+                    if self.parsed_puzzles.figures[figure_id].is_good_puzzle() {
+                        for other_figure_id in 0..self.parsed_puzzles.figures.len() {
+                            if other_figure_id == figure_id {
+                                continue;
+                            }
+                            let figure = &self.parsed_puzzles.figures[figure_id];
+                            let other_figure = &self.parsed_puzzles.figures[other_figure_id];
+                            if other_figure.is_good_puzzle() {
+                                for j in 0..4 {
+                                    if let Some(result) = match_borders(
+                                        figure,
+                                        i,
+                                        other_figure,
+                                        j,
+                                        figure_id,
+                                        other_figure_id,
+                                    ) {
+                                        self.matched_borders[i].push(result);
+                                    }
+                                }
+                            }
+                        }
+                        self.matched_borders[i].sort_by(|a, b| a.score.total_cmp(&b.score));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
+        // {
+        //     ui.painter()
+        //         .add(Shape::rect_filled(rect, Rounding::none(), Color32::YELLOW));
+        // }
+        {
+            self.change_zoom(ui);
+        }
+
+        self.show_white_background(ui);
+        self.show_parsed(ui);
 
         if false {
             for pos in self.frame.iter() {
@@ -214,53 +288,6 @@ impl MyWidget {
             self.frame[id] += drag_delta;
         } else {
             self.offset += drag_delta;
-        }
-
-        let show_border = |figure: &Figure, self_: &MyWidget| {
-            for i in 0..figure.border.len() {
-                let p1 = self_.convert_to_screen(figure.border[i].pos2());
-
-                let color = Color32::GREEN;
-                ui.painter().circle_filled(p1, 3.0, color);
-                let p2 =
-                    self_.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
-                ui.painter()
-                    .add(Shape::line_segment([p1, p2], Stroke::new(2.0, color)));
-            }
-        };
-
-        if let Some(figure_id) = self.which_figure_hovered(ui) {
-            let figure = &self.parsed_puzzles.figures[figure_id];
-            show_border(figure, self);
-            if ui.input().pointer.primary_clicked() {
-                for i in 0..4 {
-                    self.matched_borders[i].clear();
-                    if self.parsed_puzzles.figures[figure_id].is_good_puzzle() {
-                        for other_figure_id in 0..self.parsed_puzzles.figures.len() {
-                            if other_figure_id == figure_id {
-                                continue;
-                            }
-                            let figure = &self.parsed_puzzles.figures[figure_id];
-                            let other_figure = &self.parsed_puzzles.figures[other_figure_id];
-                            if other_figure.is_good_puzzle() {
-                                for j in 0..4 {
-                                    if let Some(result) = match_borders(
-                                        figure,
-                                        i,
-                                        other_figure,
-                                        j,
-                                        figure_id,
-                                        other_figure_id,
-                                    ) {
-                                        self.matched_borders[i].push(result);
-                                    }
-                                }
-                            }
-                        }
-                        self.matched_borders[i].sort_by(|a, b| a.score.total_cmp(&b.score));
-                    }
-                }
-            }
         }
 
         let font_id = FontId::new(20.0, FontFamily::Monospace);
@@ -335,21 +362,35 @@ impl MyWidget {
             }
         }
 
-        for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
-            if figure.good_border {
-                for &pos in figure.corner_positions.iter() {
-                    let p = self.convert_to_screen(figure.border[pos].pos2());
-                    ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
-                }
+        if self.show_parsed {
+            for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
+                if figure.good_border {
+                    for &pos in figure.corner_positions.iter() {
+                        let p = self.convert_to_screen(figure.border[pos].pos2());
+                        ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
+                    }
 
-                let center = self.convert_to_screen(figure.center.pos2());
-                ui.painter().text(
-                    center,
-                    Align2::CENTER_CENTER,
-                    figure_id.to_string(),
-                    FontId::new(20.0, FontFamily::Monospace),
-                    Color32::BLACK,
-                );
+                    let center = self.convert_to_screen(figure.center.pos2());
+                    ui.painter().text(
+                        center,
+                        Align2::CENTER_CENTER,
+                        figure_id.to_string(),
+                        FontId::new(20.0, FontFamily::Monospace),
+                        Color32::BLACK,
+                    );
+                }
+            }
+        }
+
+        for (fig_id, pos) in self.positions.iter().enumerate() {
+            if let Some(positions) = pos {
+                for (p1, p2) in positions.iter().circular_tuple_windows() {
+                    let p1 = self.convert_to_screen(p1.pos2());
+                    let p2 = self.convert_to_screen(p2.pos2());
+
+                    ui.painter()
+                        .line_segment([p1, p2], Stroke::new(2.0, self.fig_colors[fig_id]))
+                }
             }
         }
 

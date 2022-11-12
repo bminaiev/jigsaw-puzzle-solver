@@ -1,6 +1,6 @@
 use eframe::epaint::{pos2, Pos2};
 
-#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug)]
 pub struct Point {
     pub x: usize,
     pub y: usize,
@@ -97,6 +97,10 @@ impl PointF {
 
     pub fn scal_mul(&self, other: &Self) -> f64 {
         self.x * other.x + self.y * other.y
+    }
+
+    pub fn pos2(&self) -> Pos2 {
+        pos2(self.x as f32, self.y as f32)
     }
 }
 

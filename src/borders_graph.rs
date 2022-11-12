@@ -1,5 +1,6 @@
 use crate::{border_matcher::match_borders, parsed_puzzles::ParsedPuzzles};
 
+use ndarray::Array4;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -15,6 +16,7 @@ pub struct Edge {
 pub struct Graph {
     pub n: usize,
     pub all_edges: Vec<Edge>,
+    pub parsed_puzzles_hash: u64,
 }
 
 impl Graph {
@@ -48,6 +50,17 @@ impl Graph {
         Graph {
             n: parsed_puzzles.figures.len(),
             all_edges,
+            parsed_puzzles_hash: parsed_puzzles.calc_hash(),
         }
+    }
+
+    pub fn gen_adj_matrix(&self) -> Array4<f64> {
+        let n = self.n;
+        let mut dist = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 10.0);
+        for edge in self.all_edges.iter() {
+            dist[[edge.fig1, edge.side1, edge.fig2, edge.side2]] = edge.score;
+            dist[[edge.fig2, edge.side2, edge.fig1, edge.side1]] = edge.score;
+        }
+        dist
     }
 }

@@ -1,8 +1,14 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use eframe::epaint::{Color32, ColorImage};
 use rand::Rng;
 
 use crate::{dsu::Dsu, figure::Figure, point::Point};
 
+#[derive(Hash)]
 pub struct ParsedPuzzles {
     pub width: usize,
     pub height: usize,
@@ -90,5 +96,11 @@ impl ParsedPuzzles {
         }
 
         res
+    }
+
+    pub fn calc_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }

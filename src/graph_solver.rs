@@ -1,9 +1,20 @@
+use std::{
+    borrow::Borrow,
+    collections::{hash_map::DefaultHasher, VecDeque},
+    hash::{Hash, Hasher},
+};
+
 use itertools::Itertools;
-use ndarray::Array4;
 
 use crate::{
+    border_matcher::match_borders,
     borders_graph::Graph,
-    placement::{self, Placement},
+    coordinate_system::CoordinateSystem,
+    dsu::Dsu,
+    figure::Figure,
+    parsed_puzzles::ParsedPuzzles,
+    placement::Placement,
+    point::{Point, PointF},
     utils::Side,
 };
 
@@ -32,7 +43,130 @@ fn fmax4(a: [f64; 4]) -> f64 {
     res
 }
 
-pub fn solve_graph(graph: &Graph) {
+fn gen_basic_position(figure: &Figure) -> Vec<PointF> {
+    figure.border.iter().map(|p| p.conv_f64()).collect_vec()
+}
+
+struct MoveCS {
+    from_cs: CoordinateSystem,
+    to_cs: CoordinateSystem,
+}
+
+impl MoveCS {
+    pub fn new(figure: &Figure, positions: &[PointF]) -> Self {
+        let n = figure.border.len() / 2;
+        assert!(figure.border[0] != figure.border[n]);
+        assert_eq!(figure.border.len(), positions.len());
+        Self {
+            from_cs: CoordinateSystem::new(
+                figure.border[0].conv_f64(),
+                figure.border[n].conv_f64() - figure.border[0].conv_f64(),
+            ),
+            to_cs: CoordinateSystem::new(positions[0], positions[n] - positions[0]),
+        }
+    }
+
+    pub fn conv_point(&self, p: PointF) -> PointF {
+        self.to_cs.to_real(self.from_cs.create(p))
+    }
+}
+
+fn shift_everything(positions: &mut [Option<Vec<PointF>>]) {
+    let all_pts = positions.iter().flatten().flatten().collect_vec();
+    let min_x = all_pts
+        .iter()
+        .map(|p| p.x)
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap();
+    let min_y = all_pts
+        .iter()
+        .map(|p| p.y)
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap();
+    for list in positions.iter_mut() {
+        if let Some(list) = list {
+            for p in list.iter_mut() {
+                *p = *p
+                    - PointF {
+                        x: min_x - 50.0,
+                        y: min_y - 50.0,
+                    };
+            }
+        }
+    }
+}
+
+fn place_on_surface(
+    graph: &Graph,
+    placement: &Placement,
+    parsed_puzzles: &ParsedPuzzles,
+) -> Vec<Option<Vec<PointF>>> {
+    assert_eq!(graph.n, parsed_puzzles.figures.len());
+    eprintln!("Start placing on the surface!");
+    let dists = graph.gen_adj_matrix();
+    let mut all_edges = placement.get_all_neighbours();
+    let dist = |s1: Side, s2: Side| dists[[s1.fig, s1.side, s2.fig, s2.side]];
+    all_edges.sort_by(|&(s1, s2), &(s3, s4)| dist(s1, s2).total_cmp(&dist(s3, s4)));
+    let mut dsu = Dsu::new(graph.n);
+    let mut tree_edges = vec![vec![]; graph.n];
+    for (s1, s2) in all_edges.into_iter() {
+        if dsu.unite(s1.fig, s2.fig) {
+            tree_edges[s1.fig].push((s1, s2));
+            tree_edges[s2.fig].push((s2, s1));
+        }
+    }
+    let mut positions: Vec<Option<Vec<PointF>>> = vec![None; graph.n];
+    // TODO: smarter logic for root choosing
+    for root in 0..positions.len() {
+        if positions[root].is_some() || tree_edges[root].is_empty() {
+            continue;
+        }
+        eprintln!("Start root: {}", root);
+        // TODO: choose good starting position
+        positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+        while let Some(v) = queue.pop_front() {
+            for (s1, s2) in tree_edges[v].iter() {
+                if positions[s2.fig].is_some() {
+                    continue;
+                }
+                queue.push_back(s2.fig);
+
+                let match_res = match_borders(
+                    &parsed_puzzles.figures[s1.fig],
+                    s1.side,
+                    &parsed_puzzles.figures[s2.fig],
+                    s2.side,
+                    s1.fig,
+                    s2.fig,
+                )
+                .unwrap();
+
+                let move_cs = MoveCS::new(
+                    &parsed_puzzles.figures[s1.fig],
+                    &positions[s1.fig].as_ref().unwrap(),
+                );
+
+                eprintln!("score = {}", match_res.score);
+
+                positions[s2.fig] = Some(
+                    match_res
+                        .rhs
+                        .iter()
+                        .map(|&p| move_cs.conv_point(p - match_res.shifted))
+                        .collect(),
+                );
+            }
+        }
+    }
+    shift_everything(&mut positions);
+    positions
+}
+
+pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<Vec<PointF>>> {
+    assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
+
     let mut edges = graph.all_edges.clone();
     edges.sort_by(|e1, e2| e1.score.total_cmp(&e2.score));
     let mut placement = Placement::new(graph.n);
@@ -53,16 +187,13 @@ pub fn solve_graph(graph: &Graph) {
             eprintln!("Join sides! {}", e.score);
         }
     }
+    place_on_surface(graph, &placement, parsed_puzzles)
 }
 
 pub fn solve_graph2(graph: &Graph) {
     eprintln!("Hello there!");
     let n = graph.n;
-    let mut dist = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 10.0);
-    for edge in graph.all_edges.iter() {
-        dist[[edge.fig1, edge.side1, edge.fig2, edge.side2]] = edge.score;
-        dist[[edge.fig2, edge.side2, edge.fig1, edge.side1]] = edge.score;
-    }
+    let dist = graph.gen_adj_matrix();
     eprintln!("nd array created!");
 
     let all_sides = (0..n)

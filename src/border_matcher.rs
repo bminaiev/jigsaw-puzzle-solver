@@ -3,6 +3,7 @@ use std::cmp::min;
 use itertools::Itertools;
 
 use crate::{
+    coordinate_system::CoordinateSystem,
     figure::Figure,
     point::{find_center, PointF},
 };
@@ -44,6 +45,7 @@ pub struct MatchResult {
     pub rhs_id: usize,
     pub lhs_center: PointF,
     pub rhs_center: PointF,
+    pub shifted: PointF,
     // TODO: position
 }
 
@@ -67,11 +69,12 @@ impl MatchResult {
             .map(|p| p.y)
             .min_by(|a, b| a.total_cmp(b))
             .unwrap();
-        let move_pts = |pts: Vec<PointF>| -> Vec<PointF> {
-            pts.iter()
-                .map(|p| *p - PointF { x: min_x, y: min_y })
-                .collect()
+        let shifted = PointF {
+            x: -min_x,
+            y: -min_y,
         };
+        let move_pts =
+            |pts: Vec<PointF>| -> Vec<PointF> { pts.iter().map(|p| *p + shifted).collect() };
 
         let lhs = move_pts(lhs);
         let rhs = move_pts(rhs);
@@ -83,6 +86,7 @@ impl MatchResult {
             rhs,
             lhs_id,
             rhs_id,
+            shifted,
         }
     }
 }
@@ -100,37 +104,6 @@ fn get_figure_border(figure: &Figure, border_id: usize) -> Vec<PointF> {
         cur = (cur + 1) % figure.border.len();
     }
     res
-}
-
-struct CoordinateSystem {
-    start: PointF,
-    x_dir: PointF,
-    y_dir: PointF,
-}
-
-impl CoordinateSystem {
-    pub fn new(start: PointF, x_dir: PointF) -> Self {
-        assert!(x_dir.len2() != 0.0);
-        let x_dir = x_dir.norm();
-        let y_dir = x_dir.rotate_ccw90();
-        Self {
-            start,
-            x_dir,
-            y_dir,
-        }
-    }
-
-    pub fn create(&self, p: PointF) -> PointF {
-        let p = p - self.start;
-        PointF {
-            x: self.x_dir.scal_mul(&p),
-            y: self.y_dir.scal_mul(&p),
-        }
-    }
-
-    pub fn to_real(&self, p: PointF) -> PointF {
-        self.start + self.x_dir * p.x + self.y_dir * p.y
-    }
 }
 
 fn estimate_coordinate_system_by_border(border: &[PointF]) -> Option<CoordinateSystem> {
@@ -204,6 +177,7 @@ fn local_optimize_coordinate_system(
     cs
 }
 
+// TODO: use `Side` type
 pub fn match_borders(
     lhs_figure: &Figure,
     lhs_border_id: usize,

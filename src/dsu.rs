@@ -17,9 +17,13 @@ impl Dsu {
         self.parent[v]
     }
 
-    pub fn unite(&mut self, mut x: usize, mut y: usize) {
+    pub fn unite(&mut self, mut x: usize, mut y: usize) -> bool {
         x = self.get(x);
         y = self.get(y);
+        if x == y {
+            return false;
+        }
         self.parent[x] = y;
+        true
     }
 }

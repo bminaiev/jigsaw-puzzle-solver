@@ -96,17 +96,20 @@ impl Placement {
         *self.positions[id].iter().min().unwrap()
     }
 
-    // if two puzzles have the place, None is returned
-    fn gen_new_edges(&self, comp1: usize, comp2: usize) -> Option<Vec<(Side, Side)>> {
+    fn can_joins_comps(&self, comp1: usize, comp2: usize) -> bool {
         let mut used = HashSet::new();
         for &id in self.components[comp1].iter() {
             used.insert(self.get_top_left_corner(id));
         }
         for &id in self.components[comp2].iter() {
             if used.contains(&self.get_top_left_corner(id)) {
-                return None;
+                return false;
             }
         }
+        true
+    }
+
+    fn gen_edges_between_comps(&self, comp1: usize, comp2: usize) -> Vec<(Side, Side)> {
         let mut edges = vec![];
         let mut sides = HashMap::new();
         for &fig in self.components[comp1].iter() {
@@ -128,7 +131,7 @@ impl Placement {
             }
         }
 
-        Some(edges)
+        edges
     }
 
     fn join_comps(&mut self, comp1: usize, comp2: usize) {
@@ -158,8 +161,15 @@ impl Placement {
                 if delta1 == delta2 {
                     let shift = pos1[0] - pos2[1];
                     self.shift_comp(self.get_comp_id(s2.fig), shift);
-                    let new_edges =
-                        self.gen_new_edges(self.get_comp_id(s1.fig), self.get_comp_id(s2.fig))?;
+                    let comp1 = self.get_comp_id(s1.fig);
+                    let comp2 = self.get_comp_id(s2.fig);
+                    if !self.can_joins_comps(comp1, comp2) {
+                        return None;
+                    }
+                    let new_edges = self.gen_edges_between_comps(
+                        self.get_comp_id(s1.fig),
+                        self.get_comp_id(s2.fig),
+                    );
                     self.join_comps(self.get_comp_id(s1.fig), self.get_comp_id(s2.fig));
                     return Some(new_edges);
                 } else {
@@ -167,5 +177,13 @@ impl Placement {
                 }
             }
         }
+    }
+
+    pub fn get_all_neighbours(&self) -> Vec<(Side, Side)> {
+        let mut res = vec![];
+        for comp_id in 0..self.components.len() {
+            res.extend(self.gen_edges_between_comps(comp_id, comp_id));
+        }
+        res
     }
 }
