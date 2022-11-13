@@ -120,16 +120,13 @@ fn estimate_coordinate_system_by_border(border: &[PointF]) -> Option<CoordinateS
     Some(CoordinateSystem::new(p1, p2 - p1))
 }
 
-fn local_optimize_coordinate_system(
+pub fn local_optimize_coordinate_system(
     start_cs: CoordinateSystem,
     mut scorer: impl FnMut(&CoordinateSystem) -> f64,
 ) -> CoordinateSystem {
     let start_score = scorer(&start_cs);
     let mut last_score = start_score;
-    // TODO: optimize this.
-    if last_score > 100.0 {
-        return start_cs;
-    }
+
     // TODO: think about constants
     let mut start_coord_step = 10.0;
     let mut dir_step = 0.1;
@@ -199,9 +196,14 @@ pub fn match_borders(
     let move_rhs = |from_cs: &CoordinateSystem| -> Vec<PointF> {
         rhs.iter().map(|p| conv_point(from_cs, *p)).collect_vec()
     };
-    let from_cs = local_optimize_coordinate_system(from_cs_estimation, |from_cs| {
-        match_placed_borders(&lhs, &move_rhs(from_cs))
-    });
+
+    let from_cs = if match_placed_borders(&lhs, &move_rhs(&from_cs_estimation)) > 100.0 {
+        from_cs_estimation
+    } else {
+        local_optimize_coordinate_system(from_cs_estimation, |from_cs| {
+            match_placed_borders(&lhs, &move_rhs(from_cs))
+        })
+    };
 
     let res = MatchResult::new(
         match_placed_borders(&lhs, &move_rhs(&from_cs)),

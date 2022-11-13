@@ -1,13 +1,9 @@
-use std::{
-    borrow::Borrow,
-    collections::{hash_map::DefaultHasher, VecDeque},
-    hash::{Hash, Hasher},
-};
+use std::collections::VecDeque;
 
 use itertools::Itertools;
 
 use crate::{
-    border_matcher::match_borders,
+    border_matcher::{local_optimize_coordinate_system, match_borders, match_placed_borders},
     borders_graph::Graph,
     coordinate_system::CoordinateSystem,
     dsu::Dsu,
@@ -16,7 +12,7 @@ use crate::{
     placement::Placement,
     point::{Point, PointF},
     rects_fitter::{self, RectsFitter},
-    utils::Side,
+    utils::{fmax, Side},
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +27,15 @@ struct Four {
 impl Four {
     pub fn all(&self) -> [Side; 4] {
         [self.s0, self.s1, self.s2, self.s3]
+    }
+
+    pub fn neighbours(&self) -> [(Side, Side); 4] {
+        [
+            (self.s0, self.s1.ne2()),
+            (self.s0.ne(), self.s2.pr()),
+            (self.s1.ne(), self.s3.pr()),
+            (self.s2, self.s3.ne2()),
+        ]
     }
 }
 
@@ -72,6 +77,98 @@ impl MoveCS {
     }
 }
 
+fn get_border(pos: &[PointF], parsed_puzzles: &ParsedPuzzles, side: Side) -> Vec<PointF> {
+    let figure = &parsed_puzzles.figures[side.fig];
+    let mut cur = figure.corner_positions[side.side];
+    let end = figure.corner_positions[(side.side + 1) % figure.corner_positions.len()];
+    let mut res = vec![];
+    loop {
+        res.push(pos[cur]);
+        if cur == end {
+            break;
+        }
+        cur = (cur + 1) % pos.len();
+    }
+    res
+}
+
+fn get_borders_dist(
+    pos1: &[PointF],
+    pos2: &[PointF],
+    parsed_puzzles: &ParsedPuzzles,
+    s1: Side,
+    s2: Side,
+) -> f64 {
+    let border1 = get_border(pos1, parsed_puzzles, s1);
+    let mut border2 = get_border(pos2, parsed_puzzles, s2);
+    border2.reverse();
+    match_placed_borders(&border1, &border2)
+}
+
+fn local_optimize_positions(
+    all_edges: &[(Side, Side)],
+    positions: &mut [Option<Vec<PointF>>],
+    parsed_puzzles: &ParsedPuzzles,
+) {
+    let mut graph = vec![vec![]; positions.len()];
+    for &(s1, s2) in all_edges.iter() {
+        graph[s1.fig].push((s1, s2));
+    }
+
+    for glob_iter in 0..50 {
+        eprintln!("global iter: {glob_iter}");
+        let mut changed = false;
+        for v in 0..positions.len() {
+            if positions[v].is_none() {
+                continue;
+            }
+
+            let move_cs = MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap());
+            let calc_new_positions = |to_cs: &CoordinateSystem| {
+                parsed_puzzles.figures[v]
+                    .border
+                    .iter()
+                    .map(|&p| to_cs.to_real(move_cs.from_cs.create(p.conv_f64())))
+                    .collect_vec()
+            };
+
+            let calc_score = |to_cs: &CoordinateSystem| {
+                let my_pos = calc_new_positions(to_cs);
+                let mut res = 0.0;
+                for &(s1, s2) in graph[v].iter() {
+                    assert_eq!(s1.fig, v);
+                    if positions[s2.fig].is_none() {
+                        continue;
+                    }
+                    let dist = get_borders_dist(
+                        &my_pos,
+                        positions[s2.fig].as_ref().unwrap(),
+                        parsed_puzzles,
+                        s1,
+                        s2,
+                    );
+                    // res = fmax(res, dist);
+                    res += dist;
+                }
+                res
+            };
+
+            let start_score = calc_score(&move_cs.to_cs);
+            let to_cs = local_optimize_coordinate_system(move_cs.to_cs, calc_score);
+            let new_score = calc_score(&to_cs);
+            // eprintln!("scores: {} -> {}", start_score, new_score);
+            if new_score < start_score {
+                positions[v] = Some(calc_new_positions(&to_cs));
+                changed = true;
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+}
+
 fn place_on_surface(
     graph: &Graph,
     placement: &Placement,
@@ -85,7 +182,7 @@ fn place_on_surface(
     all_edges.sort_by(|&(s1, s2), &(s3, s4)| dist(s1, s2).total_cmp(&dist(s3, s4)));
     let mut dsu = Dsu::new(graph.n);
     let mut tree_edges = vec![vec![]; graph.n];
-    for (s1, s2) in all_edges.into_iter() {
+    for &(s1, s2) in all_edges.iter() {
         if dsu.unite(s1.fig, s2.fig) {
             tree_edges[s1.fig].push((s1, s2));
             tree_edges[s2.fig].push((s2, s1));
@@ -136,6 +233,7 @@ fn place_on_surface(
                         .map(|&p| move_cs.conv_point(p - match_res.shifted))
                         .collect(),
                 );
+                local_optimize_positions(&all_edges, &mut positions, parsed_puzzles);
             }
         }
         {
@@ -156,7 +254,10 @@ fn place_on_surface(
     positions
 }
 
-pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<Vec<PointF>>> {
+pub fn solve_graph_simple(
+    graph: &Graph,
+    parsed_puzzles: &ParsedPuzzles,
+) -> Vec<Option<Vec<PointF>>> {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
     let mut edges = graph.all_edges.clone();
@@ -186,7 +287,9 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<
     place_on_surface(graph, &placement, parsed_puzzles)
 }
 
-pub fn solve_graph2(graph: &Graph) {
+pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<Vec<PointF>>> {
+    assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
+
     eprintln!("Hello there!");
     let n = graph.n;
     let dist = graph.gen_adj_matrix();
@@ -213,6 +316,9 @@ pub fn solve_graph2(graph: &Graph) {
                     continue;
                 }
                 for &s3 in &all_sides {
+                    if s0.fig == s3.fig {
+                        continue;
+                    }
                     let d2 = dist(s1.ne(), s3.pr());
                     let d3 = dist(s2, s3.ne2());
                     if d2 > MAX_DIST || d3 > MAX_DIST {
@@ -231,23 +337,29 @@ pub fn solve_graph2(graph: &Graph) {
     }
     fours.sort_by(|f1, f2| f1.max_dist.total_cmp(&f2.max_dist));
 
-    let mut rot_by_figure = vec![None; n];
+    let mut placement = Placement::new(graph.n);
+
+    let mut used = vec![false; graph.n];
 
     for four in fours.iter() {
         let mut ok = true;
         for s in four.all() {
-            if let Some(rot) = rot_by_figure[s.fig] {
-                if rot != s.side {
-                    ok = false;
-                }
+            if used[s.fig] {
+                ok = false;
             }
         }
-        if ok {
-            for s in four.all() {
-                rot_by_figure[s.fig] = Some(s.side);
-            }
-            eprintln!("{:?}", four);
+        if !ok {
+            continue;
+        }
+        eprintln!("Try {:?}", four);
+        for s in four.all() {
+            used[s.fig] = true;
+        }
+        for (s1, s2) in four.neighbours() {
+            assert!(placement.join_sides(s1, s2).is_some());
         }
     }
     eprintln!("finished..");
+
+    place_on_surface(graph, &placement, parsed_puzzles)
 }
