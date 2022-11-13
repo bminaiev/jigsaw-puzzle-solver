@@ -109,19 +109,18 @@ fn local_optimize_positions(
     all_edges: &[(Side, Side)],
     positions: &mut [Option<Vec<PointF>>],
     parsed_puzzles: &ParsedPuzzles,
+    cur_component: &[usize],
 ) {
     let mut graph = vec![vec![]; positions.len()];
     for &(s1, s2) in all_edges.iter() {
         graph[s1.fig].push((s1, s2));
     }
 
-    for glob_iter in 0..50 {
+    for glob_iter in 0..1000 {
         eprintln!("global iter: {glob_iter}");
         let mut changed = false;
-        for v in 0..positions.len() {
-            if positions[v].is_none() {
-                continue;
-            }
+        for &v in cur_component.iter() {
+            assert!(positions[v].is_some());
 
             let move_cs = MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap());
             let calc_new_positions = |to_cs: &CoordinateSystem| {
@@ -233,7 +232,12 @@ fn place_on_surface(
                         .map(|&p| move_cs.conv_point(p - match_res.shifted))
                         .collect(),
                 );
-                local_optimize_positions(&all_edges, &mut positions, parsed_puzzles);
+                local_optimize_positions(
+                    &all_edges,
+                    &mut positions,
+                    parsed_puzzles,
+                    &cur_component,
+                );
             }
         }
         {
