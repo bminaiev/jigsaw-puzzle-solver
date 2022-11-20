@@ -1,5 +1,6 @@
 use crate::point::PointF;
 
+#[derive(Clone)]
 pub struct CoordinateSystem {
     pub start: PointF,
     pub x_dir: PointF,

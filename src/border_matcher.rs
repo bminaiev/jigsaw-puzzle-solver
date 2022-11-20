@@ -120,10 +120,10 @@ fn estimate_coordinate_system_by_border(border: &[PointF]) -> Option<CoordinateS
     Some(CoordinateSystem::new(p1, p2 - p1))
 }
 
-pub fn local_optimize_coordinate_system(
-    start_cs: CoordinateSystem,
-    mut scorer: impl FnMut(&CoordinateSystem) -> f64,
-) -> CoordinateSystem {
+pub fn local_optimize_coordinate_systems(
+    start_cs: &[CoordinateSystem],
+    mut scorer: impl FnMut(&[CoordinateSystem]) -> f64,
+) -> Vec<CoordinateSystem> {
     let start_score = scorer(&start_cs);
     let mut last_score = start_score;
 
@@ -138,17 +138,25 @@ pub fn local_optimize_coordinate_system(
         PointF { x: 0.0, y: 1.0 },
         PointF { x: 0.0, y: -1.0 },
     ];
-    let mut cs = start_cs;
+    let mut cs = start_cs.to_vec();
     while start_coord_step > MIN_EPS || dir_step > MIN_EPS {
         {
             let mut changed = false;
-            for mv in moves.iter() {
-                let ncs = CoordinateSystem::new(cs.start + *mv * start_coord_step, cs.x_dir);
-                let new_score = scorer(&ncs);
-                if new_score < last_score {
-                    changed = true;
-                    last_score = new_score;
-                    cs = ncs;
+            for cs_id in 0..cs.len() {
+                for mv in moves.iter() {
+                    let ncs = CoordinateSystem::new(
+                        cs[cs_id].start + *mv * start_coord_step,
+                        cs[cs_id].x_dir,
+                    );
+                    let prev_cs = cs[cs_id].clone();
+                    cs[cs_id] = ncs;
+                    let new_score = scorer(&cs);
+                    if new_score < last_score {
+                        changed = true;
+                        last_score = new_score;
+                    } else {
+                        cs[cs_id] = prev_cs;
+                    }
                 }
             }
             if !changed {
@@ -157,13 +165,19 @@ pub fn local_optimize_coordinate_system(
         }
         {
             let mut changed = false;
-            for mv in moves.iter() {
-                let ncs = CoordinateSystem::new(cs.start, cs.x_dir + *mv * dir_step);
-                let new_score = scorer(&ncs);
-                if new_score < last_score {
-                    changed = true;
-                    last_score = new_score;
-                    cs = ncs;
+            for cs_id in 0..cs.len() {
+                for mv in moves.iter() {
+                    let ncs =
+                        CoordinateSystem::new(cs[cs_id].start, cs[cs_id].x_dir + *mv * dir_step);
+                    let prev_cs = cs[cs_id].clone();
+                    cs[cs_id] = ncs;
+                    let new_score = scorer(&cs);
+                    if new_score < last_score {
+                        changed = true;
+                        last_score = new_score;
+                    } else {
+                        cs[cs_id] = prev_cs;
+                    }
                 }
             }
             if !changed {
@@ -200,9 +214,10 @@ pub fn match_borders(
     let from_cs = if match_placed_borders(&lhs, &move_rhs(&from_cs_estimation)) > 100.0 {
         from_cs_estimation
     } else {
-        local_optimize_coordinate_system(from_cs_estimation, |from_cs| {
-            match_placed_borders(&lhs, &move_rhs(from_cs))
-        })
+        local_optimize_coordinate_systems(&[from_cs_estimation], |from_cs| {
+            match_placed_borders(&lhs, &move_rhs(&from_cs[0]))
+        })[0]
+            .clone()
     };
 
     let res = MatchResult::new(

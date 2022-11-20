@@ -1,9 +1,9 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use itertools::Itertools;
 
 use crate::{
-    border_matcher::{local_optimize_coordinate_system, match_borders, match_placed_borders},
+    border_matcher::{local_optimize_coordinate_systems, match_borders, match_placed_borders},
     borders_graph::Graph,
     coordinate_system::CoordinateSystem,
     dsu::Dsu,
@@ -53,6 +53,7 @@ fn gen_basic_position(figure: &Figure) -> Vec<PointF> {
     figure.border.iter().map(|p| p.conv_f64()).collect_vec()
 }
 
+#[derive(Clone)]
 struct MoveCS {
     from_cs: CoordinateSystem,
     to_cs: CoordinateSystem,
@@ -105,64 +106,101 @@ fn get_borders_dist(
     match_placed_borders(&border1, &border2)
 }
 
+#[derive(Debug)]
+struct EdgesScores {
+    all_scores: Vec<f64>,
+}
+
+impl EdgesScores {
+    pub fn new() -> Self {
+        Self { all_scores: vec![] }
+    }
+
+    pub fn add_score(&mut self, score: f64) {
+        self.all_scores.push(score);
+    }
+
+    pub fn get_final_score(&self) -> f64 {
+        self.all_scores.iter().sum()
+    }
+}
+
 fn local_optimize_positions(
     all_edges: &[(Side, Side)],
     positions: &mut [Option<Vec<PointF>>],
     parsed_puzzles: &ParsedPuzzles,
     cur_component: &[usize],
 ) {
-    let mut graph = vec![vec![]; positions.len()];
-    for &(s1, s2) in all_edges.iter() {
-        graph[s1.fig].push((s1, s2));
-    }
+    let local_id_mapping: BTreeMap<usize, usize> = cur_component
+        .iter()
+        .enumerate()
+        .map(|(local_id, &global_id)| (global_id, local_id))
+        .collect();
+
+    let all_edges = all_edges
+        .iter()
+        .cloned()
+        .filter(|(s1, s2)| {
+            positions[s1.fig].is_some()
+                && positions[s2.fig].is_some()
+                && local_id_mapping.contains_key(&s1.fig)
+                && local_id_mapping.contains_key(&s2.fig)
+                && s1.fig < s2.fig
+        })
+        .collect_vec();
 
     for glob_iter in 0..1000 {
         eprintln!("global iter: {glob_iter}");
-        let mut changed = false;
-        for &v in cur_component.iter() {
-            assert!(positions[v].is_some());
 
-            let move_cs = MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap());
-            let calc_new_positions = |to_cs: &CoordinateSystem| {
-                parsed_puzzles.figures[v]
-                    .border
-                    .iter()
-                    .map(|&p| to_cs.to_real(move_cs.from_cs.create(p.conv_f64())))
-                    .collect_vec()
-            };
+        let move_cs = cur_component
+            .iter()
+            .map(|&v| MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap()))
+            .collect_vec();
 
-            let calc_score = |to_cs: &CoordinateSystem| {
-                let my_pos = calc_new_positions(to_cs);
-                let mut res = 0.0;
-                for &(s1, s2) in graph[v].iter() {
-                    assert_eq!(s1.fig, v);
-                    if positions[s2.fig].is_none() {
-                        continue;
-                    }
-                    let dist = get_borders_dist(
-                        &my_pos,
-                        positions[s2.fig].as_ref().unwrap(),
-                        parsed_puzzles,
-                        s1,
-                        s2,
-                    );
-                    // res = fmax(res, dist);
-                    res += dist;
-                }
-                res
-            };
+        let calc_new_positions = |to_cs: &[CoordinateSystem]| {
+            (0..to_cs.len())
+                .map(|local_id| {
+                    parsed_puzzles.figures[cur_component[local_id]]
+                        .border
+                        .iter()
+                        .map(|&p| {
+                            to_cs[local_id].to_real(move_cs[local_id].from_cs.create(p.conv_f64()))
+                        })
+                        .collect_vec()
+                })
+                .collect_vec()
+        };
 
-            let start_score = calc_score(&move_cs.to_cs);
-            let to_cs = local_optimize_coordinate_system(move_cs.to_cs, calc_score);
-            let new_score = calc_score(&to_cs);
-            // eprintln!("scores: {} -> {}", start_score, new_score);
-            if new_score < start_score {
-                positions[v] = Some(calc_new_positions(&to_cs));
-                changed = true;
+        let calc_score = |to_cs: &[CoordinateSystem]| {
+            let my_pos = calc_new_positions(to_cs);
+            let mut res = EdgesScores::new();
+            for &(s1, s2) in all_edges.iter() {
+                let dist = get_borders_dist(
+                    &my_pos[local_id_mapping[&s1.fig]],
+                    &my_pos[local_id_mapping[&s2.fig]],
+                    parsed_puzzles,
+                    s1,
+                    s2,
+                );
+                res.add_score(dist);
             }
-        }
+            res
+        };
 
-        if !changed {
+        let to_cs = move_cs
+            .iter()
+            .map(|move_cs| move_cs.to_cs.clone())
+            .collect_vec();
+        let start_score = calc_score(&to_cs);
+        let to_cs =
+            local_optimize_coordinate_systems(&to_cs, |to_cs| calc_score(to_cs).get_final_score());
+        let new_score = calc_score(&to_cs);
+        if new_score.get_final_score() < start_score.get_final_score() {
+            let new_pos = calc_new_positions(&to_cs);
+            for local_id in 0..cur_component.len() {
+                positions[cur_component[local_id]] = Some(new_pos[local_id].clone());
+            }
+        } else {
             break;
         }
     }
@@ -199,13 +237,13 @@ fn place_on_surface(
         positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
         let mut queue = VecDeque::new();
         queue.push_back(root);
-        let mut cur_component = vec![];
+        let mut cur_component = vec![root];
         while let Some(v) = queue.pop_front() {
-            cur_component.push(v);
             for (s1, s2) in tree_edges[v].iter() {
                 if positions[s2.fig].is_some() {
                     continue;
                 }
+                cur_component.push(s2.fig);
                 queue.push_back(s2.fig);
 
                 let match_res = match_borders(
