@@ -71,6 +71,11 @@ impl Placement {
         unreachable!("Figure doesn't exist");
     }
 
+    pub fn get_fig_comp_size(&self, fig: usize) -> usize {
+        let comp_id = self.get_comp_id(fig);
+        self.components[comp_id].len()
+    }
+
     fn get_side_positions(&self, s: Side) -> [Pos; 2] {
         let all_pos = self.positions[s.fig];
         [all_pos[s.side], all_pos[(s.side + 1) % 4]]

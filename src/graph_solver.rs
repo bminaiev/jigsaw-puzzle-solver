@@ -39,6 +39,13 @@ impl Four {
     }
 }
 
+#[derive(Clone, Debug)]
+struct Two {
+    s0: Side,
+    s1: Side,
+    dist: f64,
+}
+
 fn fmax4(a: [f64; 4]) -> f64 {
     let mut res = a[0];
     for &x in a[1..].iter() {
@@ -149,7 +156,7 @@ fn local_optimize_positions(
         })
         .collect_vec();
 
-    for glob_iter in 0..1000 {
+    for glob_iter in 0..3 {
         eprintln!("global iter: {glob_iter}");
 
         let move_cs = cur_component
@@ -344,14 +351,17 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<
 
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
-    const MAX_DIST: f64 = 3.0;
+    const MAX_DIST: f64 = 3.5;
+    const MAX_NEW_EDGE_DIST: f64 = 7.0;
     let mut fours = vec![];
+    let mut twos = vec![];
     for &s0 in &all_sides {
         for &s1 in &all_sides {
             let d0 = dist(s0, s1.ne2());
             if d0 > MAX_DIST {
                 continue;
             }
+            twos.push(Two { s0, s1, dist: d0 });
             for &s2 in &all_sides {
                 let d1 = dist(s0.ne(), s2.pr());
                 if d1 > MAX_DIST {
@@ -378,30 +388,73 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Vec<Option<
         }
     }
     fours.sort_by(|f1, f2| f1.max_dist.total_cmp(&f2.max_dist));
+    twos.sort_by(|t1, t2| t1.dist.total_cmp(&t2.dist));
+    eprintln!("total fours: {}, twos: {}", fours.len(), twos.len());
 
     let mut placement = Placement::new(graph.n);
 
     let mut used = vec![false; graph.n];
 
-    for four in fours.iter() {
-        let mut ok = true;
+    for (it, four) in fours.iter().enumerate() {
+        if it % 1000 == 0 {
+            eprintln!("fours: {}/{}", it, fours.len());
+        }
+        let mut cnt_used = 0;
         for s in four.all() {
             if used[s.fig] {
+                cnt_used += 1;
+            }
+        }
+        if cnt_used == 4 {
+            continue;
+        }
+        let mut new_placement = placement.clone();
+        let mut ok = true;
+        for (s1, s2) in four.neighbours() {
+            if let Some(edges) = new_placement.join_sides(s1, s2) {
+                if edges
+                    .iter()
+                    .any(|&(s1, s2)| dist(s1, s2) > MAX_NEW_EDGE_DIST)
+                {
+                    ok = false;
+                    break;
+                }
+            } else {
                 ok = false;
+                break;
             }
         }
         if !ok {
             continue;
         }
-        eprintln!("Try {:?}", four);
+        placement = new_placement;
         for s in four.all() {
             used[s.fig] = true;
         }
-        for (s1, s2) in four.neighbours() {
-            assert!(placement.join_sides(s1, s2).is_some());
+    }
+    eprintln!("finished fours..");
+    const ADD_TWOS: bool = false;
+    if ADD_TWOS {
+        for two in twos.iter() {
+            if placement.get_fig_comp_size(two.s0.fig) == 1
+                || placement.get_fig_comp_size(two.s1.fig) == 1
+            {
+                continue;
+            }
+            let old_placement = placement.clone();
+            if let Some(edges) = placement.join_sides(two.s0, two.s1) {
+                if edges
+                    .iter()
+                    .any(|&(s1, s2)| dist(s1, s2) > MAX_NEW_EDGE_DIST)
+                {
+                    eprintln!("will not join, roll back!");
+                    placement = old_placement;
+                } else {
+                    eprintln!("joined pair!");
+                }
+            }
         }
     }
-    eprintln!("finished..");
 
     place_on_surface(graph, &placement, parsed_puzzles)
 }

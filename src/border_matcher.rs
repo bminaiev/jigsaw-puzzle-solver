@@ -139,7 +139,13 @@ pub fn local_optimize_coordinate_systems(
         PointF { x: 0.0, y: -1.0 },
     ];
     let mut cs = start_cs.to_vec();
+    let mut changed_steps = 0;
+    const MAX_CHANGED_STEPS: usize = 50;
     while start_coord_step > MIN_EPS || dir_step > MIN_EPS {
+        changed_steps += 1;
+        if changed_steps > MAX_CHANGED_STEPS {
+            changed_steps = 0;
+        }
         {
             let mut changed = false;
             for cs_id in 0..cs.len() {
@@ -159,7 +165,7 @@ pub fn local_optimize_coordinate_systems(
                     }
                 }
             }
-            if !changed {
+            if !changed || changed_steps == MAX_CHANGED_STEPS {
                 start_coord_step *= MULT;
             }
         }
@@ -180,7 +186,7 @@ pub fn local_optimize_coordinate_systems(
                     }
                 }
             }
-            if !changed {
+            if !changed || changed_steps == MAX_CHANGED_STEPS {
                 dir_step *= MULT;
             }
         }
