@@ -391,6 +391,15 @@ impl MyWidget {
                     ui.painter()
                         .line_segment([p1, p2], Stroke::new(2.0, self.fig_colors[fig_id]))
                 }
+
+                let center = self.convert_to_screen(calc_center(positions).pos2());
+                ui.painter().text(
+                    center,
+                    Align2::CENTER_CENTER,
+                    fig_id.to_string(),
+                    FontId::new(20.0, FontFamily::Monospace),
+                    Color32::BLACK,
+                );
             }
         }
 
@@ -403,4 +412,12 @@ impl MyWidget {
 
         response
     }
+}
+
+fn calc_center(positions: &[PointF]) -> PointF {
+    let mut res = PointF::ZERO;
+    for p in positions.iter() {
+        res = res + *p;
+    }
+    res / (positions.len() as f64)
 }

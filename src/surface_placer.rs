@@ -319,7 +319,6 @@ pub fn place_on_surface(
     all_edges.sort_by(|&(s1, s2), &(s3, s4)| dist(s1, s2).total_cmp(&dist(s3, s4)));
     let mut dsu = Dsu::new(graph.n);
     for &(s1, s2) in all_edges.iter() {
-        eprintln!("unite {} {}", s1.fig, s2.fig);
         dsu.unite(s1.fig, s2.fig);
     }
     let mut rects_fitter = RectsFitter::new();
