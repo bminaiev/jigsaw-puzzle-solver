@@ -247,4 +247,14 @@ impl Figure {
     pub fn is_good_puzzle(&self) -> bool {
         self.good_border && self.corner_positions.len() == 4
     }
+
+    pub fn get_cs_points_indexes(&self) -> (usize, usize) {
+        let n = self.border.len() / 2;
+        (0, n)
+    }
+
+    pub fn get_cs_points(&self) -> (Point, Point) {
+        let n = self.border.len() / 2;
+        (self.border[0], self.border[n])
+    }
 }

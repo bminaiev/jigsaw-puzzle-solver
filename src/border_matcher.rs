@@ -45,7 +45,6 @@ pub struct MatchResult {
     pub rhs_id: usize,
     pub lhs_center: PointF,
     pub rhs_center: PointF,
-    pub shifted: PointF,
     // TODO: position
 }
 
@@ -69,15 +68,10 @@ impl MatchResult {
             .map(|p| p.y)
             .min_by(|a, b| a.total_cmp(b))
             .unwrap();
-        let shifted = PointF {
-            x: -min_x,
-            y: -min_y,
-        };
-        let move_pts =
-            |pts: Vec<PointF>| -> Vec<PointF> { pts.iter().map(|p| *p + shifted).collect() };
+        // let move_pts = |pts: Vec<PointF>| -> Vec<PointF> { pts.iter().map(|p| *p).collect() };
 
-        let lhs = move_pts(lhs);
-        let rhs = move_pts(rhs);
+        // let lhs = move_pts(lhs);
+        // let rhs = move_pts(rhs);
         Self {
             lhs_center: find_center(&lhs),
             rhs_center: find_center(&rhs),
@@ -86,7 +80,6 @@ impl MatchResult {
             rhs,
             lhs_id,
             rhs_id,
-            shifted,
         }
     }
 }

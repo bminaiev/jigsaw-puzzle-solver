@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 pub struct Dsu {
     parent: Vec<usize>,
 }
@@ -25,5 +27,13 @@ impl Dsu {
         }
         self.parent[x] = y;
         true
+    }
+
+    pub fn get_components(&mut self) -> Vec<Vec<usize>> {
+        let mut res = vec![vec![]; self.parent.len()];
+        for v in 0..self.parent.len() {
+            res[self.get(v)].push(v);
+        }
+        res.into_iter().filter(|v| !v.is_empty()).collect_vec()
     }
 }

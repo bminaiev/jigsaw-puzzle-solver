@@ -178,6 +178,7 @@ impl Placement {
                             fig: fig.figure_id,
                             side,
                         },
+                        0,
                     ));
                 }
             }
@@ -195,17 +196,21 @@ impl Placement {
                             fig: fig.figure_id,
                             side,
                         },
+                        1,
                     ));
                 }
             }
         }
 
         all_sides.sort();
-        for w in all_sides.windows(2) {
-            let e1 = w[0];
-            let e2 = w[1];
-            if e1.0 == e2.0 && e1.1 == e2.1 {
-                edges.push((e1.2, e2.2));
+        // Sorry, I am just too lazy to write it nicely.
+        for w in all_sides.group_by(|s1, s2| (s1.0, s1.1) == (s2.0, s2.1)) {
+            for e1 in w.iter() {
+                for e2 in w.iter() {
+                    if e1.3 == 0 && e2.3 == 1 {
+                        edges.push((e1.2, e2.2));
+                    }
+                }
             }
         }
 
