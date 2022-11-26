@@ -1,4 +1,8 @@
-use crate::{border_matcher::match_borders, parsed_puzzles::ParsedPuzzles};
+use crate::{
+    border_matcher::{match_borders, match_borders_without_move},
+    figure::Figure,
+    parsed_puzzles::ParsedPuzzles,
+};
 
 use ndarray::Array4;
 use serde::{Deserialize, Serialize};
@@ -10,6 +14,7 @@ pub struct Edge {
     pub side1: usize,
     pub side2: usize,
     pub score: f64,
+    pub existing_edge: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,11 +23,11 @@ pub struct Graph {
     pub all_edges: Vec<Edge>,
     pub parsed_puzzles_hash: u64,
 }
-
 impl Graph {
     pub fn new(parsed_puzzles: &ParsedPuzzles) -> Self {
         let mut all_edges = vec![];
         let figures = &parsed_puzzles.figures;
+
         for fig1 in 0..figures.len() {
             eprintln!("{}/{}", fig1, figures.len());
             for fig2 in fig1 + 1..figures.len() {
@@ -31,6 +36,15 @@ impl Graph {
                 }
                 for side1 in 0..4 {
                     for side2 in 0..4 {
+                        let existing_edge = match_borders_without_move(
+                            &figures[fig1],
+                            side1,
+                            &figures[fig2],
+                            side2,
+                            fig1,
+                            fig2,
+                        )
+                        .is_some();
                         if let Some(res) =
                             match_borders(&figures[fig1], side1, &figures[fig2], side2, fig1, fig2)
                         {
@@ -41,7 +55,11 @@ impl Graph {
                                 side1,
                                 side2,
                                 score,
+                                existing_edge,
                             });
+                            if existing_edge {
+                                eprintln!("Add existing edge: {fig1} {fig2}");
+                            }
                         }
                     }
                 }

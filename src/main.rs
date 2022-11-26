@@ -25,7 +25,8 @@ mod rects_fitter;
 mod topn;
 mod utils;
 
-const PATH: &str = "img/crop_only_white.jpg";
+const PATH: &str = "img/crop_only_white_and_start.jpg";
+const GRAPH_PATH: &str = "graph_with_start.json";
 
 // TODO: nicer type
 fn main_ui(positions: Vec<Option<Vec<PointF>>>) {
@@ -44,13 +45,13 @@ fn main_build_graph() {
     let color_image = load_image_from_path(PATH).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
     let graph = Graph::new(&parsed_puzzles);
-    fs::write("graph.json", serde_json::to_string(&graph).unwrap()).unwrap();
+    fs::write(GRAPH_PATH, serde_json::to_string(&graph).unwrap()).unwrap();
 }
 
 fn main_load_graph() {
     let color_image = load_image_from_path(PATH).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
-    let graph: Graph = serde_json::from_str(&fs::read_to_string("graph.json").unwrap()).unwrap();
+    let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
     let positions = solve_graph(&graph, &parsed_puzzles);
     eprintln!("positions generated!");
@@ -60,6 +61,7 @@ fn main_load_graph() {
 fn main() {
     // main_build_graph();
     main_load_graph();
+    // main_ui(vec![]);
 }
 
 struct MyApp {

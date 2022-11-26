@@ -239,3 +239,31 @@ pub fn match_borders(
     );
     Some(res)
 }
+
+pub fn match_borders_without_move(
+    lhs_figure: &Figure,
+    lhs_border_id: usize,
+    rhs_figure: &Figure,
+    rhs_border_id: usize,
+    lhs_id: usize,
+    rhs_id: usize,
+) -> Option<MatchResult> {
+    let lhs = get_figure_border(&lhs_figure, lhs_border_id);
+    let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
+    rhs.reverse();
+
+    let score = match_placed_borders(&lhs, &rhs);
+
+    if score > 30.0 {
+        return None;
+    }
+
+    let res = MatchResult::new(
+        score,
+        lhs_figure.border.iter().map(|p| p.conv_f64()).collect_vec(),
+        rhs_figure.border.iter().map(|p| p.conv_f64()).collect_vec(),
+        lhs_id,
+        rhs_id,
+    );
+    Some(res)
+}
