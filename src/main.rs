@@ -6,7 +6,8 @@ use eframe::egui;
 
 use crate::{
     borders_graph::Graph, graph_solver::solve_graph, my_widget::MyWidget,
-    parsed_puzzles::ParsedPuzzles, point::PointF, utils::load_image_from_path,
+    parsed_puzzles::ParsedPuzzles, placement::Placement, point::PointF,
+    surface_placer::place_on_surface, utils::load_image_from_path,
 };
 
 mod border_matcher;
@@ -22,11 +23,14 @@ mod parsed_puzzles;
 mod placement;
 mod point;
 mod rects_fitter;
+mod surface_placer;
 mod topn;
 mod utils;
 
 const PATH: &str = "img/crop_only_white_and_start.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
+const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
+const LOAD_EXISTING_SOLUTION: bool = true;
 
 // TODO: nicer type
 fn main_ui(positions: Vec<Option<Vec<PointF>>>) {
@@ -53,7 +57,15 @@ fn main_load_graph() {
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
-    let positions = solve_graph(&graph, &parsed_puzzles);
+    let solution_graph = if LOAD_EXISTING_SOLUTION {
+        serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap()
+    } else {
+        let res = solve_graph(&graph, &parsed_puzzles);
+        fs::write(GRAPH_SOLUTION_PATH, serde_json::to_string(&res).unwrap()).unwrap();
+        res
+    };
+    let placement = Placement::from_full_graph(&solution_graph);
+    let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
     eprintln!("positions generated!");
     main_ui(positions);
 }

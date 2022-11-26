@@ -1,9 +1,14 @@
+use std::collections::BTreeSet;
+
 use crate::{
     border_matcher::{match_borders, match_borders_without_move},
     figure::Figure,
     parsed_puzzles::ParsedPuzzles,
+    placement::{self, Placement},
+    utils::Side,
 };
 
+use itertools::Itertools;
 use ndarray::Array4;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +22,21 @@ pub struct Edge {
     pub existing_edge: bool,
 }
 
+impl Edge {
+    pub fn sides(&self) -> (Side, Side) {
+        (
+            Side {
+                fig: self.fig1,
+                side: self.side1,
+            },
+            Side {
+                fig: self.fig2,
+                side: self.side2,
+            },
+        )
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Graph {
     pub n: usize,
@@ -24,6 +44,21 @@ pub struct Graph {
     pub parsed_puzzles_hash: u64,
 }
 impl Graph {
+    pub fn get_subgraph(&self, placement: &Placement) -> Self {
+        let all_sides: BTreeSet<_> = placement.get_all_neighbours().into_iter().collect();
+        let all_edges = self
+            .all_edges
+            .iter()
+            .filter(|e| all_sides.contains(&e.sides()))
+            .cloned()
+            .collect_vec();
+        Self {
+            n: self.n,
+            parsed_puzzles_hash: self.parsed_puzzles_hash,
+            all_edges,
+        }
+    }
+
     pub fn new(parsed_puzzles: &ParsedPuzzles) -> Self {
         let mut all_edges = vec![];
         let figures = &parsed_puzzles.figures;

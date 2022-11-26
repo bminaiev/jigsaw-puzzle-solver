@@ -1,6 +1,6 @@
 use itertools::Itertools;
 
-use crate::utils::Side;
+use crate::{borders_graph::Graph, utils::Side};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
@@ -61,6 +61,15 @@ const DEFAULT_POS: [Pos; 4] = [
 impl Placement {
     pub fn new() -> Self {
         Self { figures: vec![] }
+    }
+
+    pub fn from_full_graph(graph: &Graph) -> Self {
+        let mut res = Self::new();
+        for edge in graph.all_edges.iter() {
+            let (s1, s2) = edge.sides();
+            res.join_sides(s1, s2).unwrap();
+        }
+        res
     }
 
     pub fn get_bounding_box(&self) -> (i32, i32) {
