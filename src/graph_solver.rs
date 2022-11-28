@@ -48,7 +48,7 @@ impl SearchState {
         let min_bb_edge = min(bb.0, bb.1);
         let score = (all_edges.len() as f64)
             / (max(1, vertices.len()) as f64)
-            / (max_bb_edge as f64).powf(1.2)
+            / (max_bb_edge as f64).powf(2.0)
             / (min_bb_edge as f64).powf(1.0);
         Self {
             all_edges,

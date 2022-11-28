@@ -1,4 +1,5 @@
 use eframe::epaint::ColorImage;
+use image::ImageBuffer;
 
 pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError> {
     let image = image::io::Reader::open(path)?.decode()?;
@@ -60,4 +61,15 @@ pub fn fmin(x: f64, y: f64) -> f64 {
     } else {
         y
     }
+}
+
+pub fn save_color_image(color_image: &ColorImage, path: &str) {
+    let mut new_img = ImageBuffer::new(color_image.size[0] as u32, color_image.size[1] as u32);
+    for x in 0..new_img.width() {
+        for y in 0..new_img.height() {
+            let color = color_image[(x as usize, y as usize)];
+            new_img[(x, y)] = image::Rgba([color.r(), color.g(), color.b(), color.a()]);
+        }
+    }
+    new_img.save(path).unwrap();
 }

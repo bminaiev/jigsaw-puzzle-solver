@@ -2,12 +2,14 @@ use itertools::Itertools;
 
 pub struct Dsu {
     parent: Vec<usize>,
+    sizes: Vec<usize>,
 }
 
 impl Dsu {
     pub fn new(n: usize) -> Self {
         Self {
             parent: (0..n).collect(),
+            sizes: vec![1; n],
         }
     }
 
@@ -26,6 +28,7 @@ impl Dsu {
             return false;
         }
         self.parent[x] = y;
+        self.sizes[y] += self.sizes[x];
         true
     }
 
@@ -35,5 +38,10 @@ impl Dsu {
             res[self.get(v)].push(v);
         }
         res.into_iter().filter(|v| !v.is_empty()).collect_vec()
+    }
+
+    pub fn get_size(&mut self, v: usize) -> usize {
+        let v = self.get(v);
+        self.sizes[v]
     }
 }

@@ -287,7 +287,7 @@ impl Figure {
             .filter_map(|(&k, &v)| if v == MAX_DIST { Some(k) } else { None })
             .collect_vec();
 
-        if border.len() <= 50 || border.len() > 1000 {
+        if border.len() <= 50 || border.len() > 3000 {
             return None;
         }
 
