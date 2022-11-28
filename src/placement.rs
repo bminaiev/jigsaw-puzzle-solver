@@ -79,6 +79,9 @@ impl Placement {
             .map(|f| f.positions.iter())
             .flatten()
             .collect_vec();
+        if all_pos.is_empty() {
+            return (0, 0);
+        }
         let max_x = all_pos.iter().map(|p| p.x).max().unwrap();
         let min_x = all_pos.iter().map(|p| p.x).min().unwrap();
         let max_y = all_pos.iter().map(|p| p.y).max().unwrap();

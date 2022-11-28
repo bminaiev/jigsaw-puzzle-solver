@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    f64::consts::PI,
+};
 
 use eframe::egui::plot::Corner;
 use itertools::Itertools;
@@ -15,7 +18,7 @@ use crate::{
     placement::Placement,
     point::{Point, PointF},
     rects_fitter::RectsFitter,
-    utils::Side,
+    utils::{fmax, fmin, Side},
 };
 
 fn gen_basic_position(figure: &Figure) -> Vec<PointF> {
@@ -183,6 +186,46 @@ fn local_optimize_positions(
     }
 }
 
+fn rotate_component(component: &[usize], positions: &mut Vec<Option<Vec<PointF>>>) {
+    let mut all_points: Vec<PointF> = vec![];
+    for &c in component.iter() {
+        all_points.extend(&positions[c].as_ref().unwrap().clone());
+    }
+    let calc_bbox = |angle: f64| -> (f64, f64) {
+        let rotated_points = all_points.iter().map(|p| p.rotate(angle)).collect_vec();
+        let mut minx = f64::MAX;
+        let mut maxx = -f64::MAX;
+        let mut miny = f64::MAX;
+        let mut maxy = -f64::MAX;
+        for p in rotated_points.iter() {
+            minx = fmin(minx, p.x);
+            maxx = fmax(maxx, p.x);
+            miny = fmin(miny, p.y);
+            maxy = fmax(maxy, p.y);
+        }
+        (maxx - minx, maxy - miny)
+    };
+    let mut best_area = f64::MAX;
+    let mut best_angle = 0.0;
+    const STEPS: usize = 1000;
+    for angle in (0..STEPS).map(|step| (step as f64) * PI / (STEPS as f64)) {
+        let (dx, dy) = calc_bbox(angle);
+        if dx < dy {
+            continue;
+        }
+        let area = dx * dy;
+        if area < best_area {
+            best_area = area;
+            best_angle = angle;
+        }
+    }
+    for &c in component.iter() {
+        for p in positions[c].as_mut().unwrap().iter_mut() {
+            *p = p.rotate(best_angle);
+        }
+    }
+}
+
 fn place_one_connected_component(
     parsed_puzzles: &ParsedPuzzles,
     component: &[usize],
@@ -302,7 +345,9 @@ fn place_one_connected_component(
     }
 
     eprintln!("Do local optimizations!");
-    local_optimize_positions(used_edges, positions, parsed_puzzles, component)
+    local_optimize_positions(used_edges, positions, parsed_puzzles, component);
+    eprintln!("Rotate component!");
+    rotate_component(component, positions);
 }
 
 pub fn place_on_surface(

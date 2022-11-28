@@ -1,4 +1,4 @@
-use std::{cmp::min, f32::consts::PI};
+use std::cmp::min;
 
 use eframe::{
     egui::{Key, Sense},
@@ -35,7 +35,9 @@ pub struct MyWidget {
     matched_borders: Vec<Vec<MatchResult>>,
     positions: Vec<Option<Vec<PointF>>>,
     show_parsed: bool,
+    show_image: bool,
     fig_colors: Vec<Color32>,
+    show_matched_borders: bool,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -52,17 +54,25 @@ fn save_color_image(color_image: &ColorImage, path: &str) {
 }
 
 impl MyWidget {
-    pub fn new(path: &str, positions: Vec<Option<Vec<PointF>>>, show_parsed: bool) -> Self {
+    pub fn new(
+        path: &str,
+        positions: Vec<Option<Vec<PointF>>>,
+        show_parsed: bool,
+        show_image: bool,
+        show_matched_borders: bool,
+    ) -> Self {
         let color_image = load_image_from_path(path).unwrap();
 
         let parsed_puzzles = ParsedPuzzles::new(&color_image);
-        let mask_image = {
+        let mask_image = if !show_parsed {
+            RetainedImage::from_color_image("test", color_image.clone())
+        } else {
             let color = parsed_puzzles.gen_image();
             save_color_image(&color, "img/puzzle.jpg");
             RetainedImage::from_color_image("mask", color)
         };
 
-        let image = RetainedImage::from_color_image("test", color_image);
+        let image = RetainedImage::from_color_image("test", color_image.clone());
         let img_size = image.size_vec2();
         let mut rng = rand::thread_rng();
         let fig_colors = (0..positions.len())
@@ -85,6 +95,8 @@ impl MyWidget {
             positions,
             show_parsed,
             fig_colors,
+            show_image,
+            show_matched_borders,
         }
     }
 
@@ -183,25 +195,21 @@ impl MyWidget {
     }
 
     fn show_parsed(&mut self, ui: &mut eframe::egui::Ui) {
-        if !self.show_parsed {
-            return;
-        }
-
         {
             let img_size = self.image.size_vec2();
             let min = self.convert_to_screen(pos2(0.0, 0.0));
             let max = self.convert_to_screen(pos2(img_size.x, img_size.y));
             let rect = Rect::from_min_max(min, max);
             let texture_id = self.image.texture_id(&ui.ctx());
-            let mut mesh = Mesh::with_texture(texture_id);
 
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-            mesh.add_rect_with_uv(rect, uv, Color32::WHITE);
-            if false {
-                ui.painter().add(Shape::mesh(mesh));
-            }
 
-            if true {
+            if self.show_image {
+                let mut mesh = Mesh::with_texture(texture_id);
+
+                mesh.add_rect_with_uv(rect, uv, Color32::WHITE);
+                ui.painter().add(Shape::mesh(mesh));
+            } else {
                 let texture_id2 = self.mask_image.texture_id(&ui.ctx());
                 let mut mesh2 = Mesh::with_texture(texture_id2);
                 mesh2.add_rect_with_uv(rect, uv, Color32::WHITE);
@@ -209,10 +217,14 @@ impl MyWidget {
             }
         }
 
+        if !self.show_parsed {
+            return;
+        }
+
         if let Some(figure_id) = self.which_figure_hovered(ui) {
             let figure = &self.parsed_puzzles.figures[figure_id];
             self.show_border(figure, ui);
-            if ui.input().pointer.primary_clicked() {
+            if ui.input().pointer.primary_clicked() && self.show_matched_borders {
                 for i in 0..4 {
                     self.matched_borders[i].clear();
                     if self.parsed_puzzles.figures[figure_id].is_good_puzzle() {
@@ -244,20 +256,134 @@ impl MyWidget {
         }
     }
 
+    fn show_best_matched_borders(&mut self, ui: &mut eframe::egui::Ui) {
+        if !self.show_matched_borders {
+            return;
+        }
+
+        let font_id = FontId::new(20.0, FontFamily::Monospace);
+        let x_offset = self.image.size()[0] as f32 + 100.0;
+        const MAX_OPTIONS: usize = 20;
+        const ONE_OPTION_SIZE: f32 = 250.0;
+
+        {
+            let min = self.convert_to_screen(pos2(x_offset, 0.0));
+            let max = self.convert_to_screen(pos2(
+                x_offset + 1000.0,
+                (MAX_OPTIONS as f32) * ONE_OPTION_SIZE,
+            ));
+            ui.painter().rect_filled(
+                Rect::from_min_max(min, max),
+                Rounding::default(),
+                Color32::WHITE,
+            );
+        }
+
+        for i in 0..4 {
+            for j in 0..min(MAX_OPTIONS, self.matched_borders[i].len()) {
+                let result = &self.matched_borders[i][j];
+
+                let offset = result.get_offset();
+
+                let conv_point = |p: PointF| -> Pos2 {
+                    let p = p + offset;
+                    pos2(
+                        p.x as f32 + x_offset + (i as f32) * ONE_OPTION_SIZE + 20.0,
+                        p.y as f32 + (j as f32) * ONE_OPTION_SIZE + 20.0,
+                    )
+                };
+
+                let draw = |pts: &[PointF], color: Color32| {
+                    for (p1, p2) in pts.iter().circular_tuple_windows() {
+                        let p1 = conv_point(*p1);
+                        let p2 = conv_point(*p2);
+                        ui.painter().line_segment(
+                            [self.convert_to_screen(p1), self.convert_to_screen(p2)],
+                            Stroke::new(2.0, color),
+                        );
+                        ui.painter()
+                            .circle_filled(self.convert_to_screen(p1), 3.0, color);
+                    }
+                };
+
+                draw(&result.lhs, Color32::BLUE);
+                draw(&result.rhs, Color32::RED);
+                ui.painter().text(
+                    self.convert_to_screen(conv_point(result.lhs_center)),
+                    Align2::CENTER_CENTER,
+                    result.lhs_id.to_string(),
+                    font_id.clone(),
+                    Color32::BLUE,
+                );
+                ui.painter().text(
+                    self.convert_to_screen(conv_point(result.rhs_center)),
+                    Align2::CENTER_CENTER,
+                    result.rhs_id.to_string(),
+                    font_id.clone(),
+                    Color32::RED,
+                );
+                ui.painter().text(
+                    self.convert_to_screen(conv_point(PointF::ZERO - offset)),
+                    Align2::LEFT_TOP,
+                    format!("score = {:.3}", result.score),
+                    font_id.clone(),
+                    Color32::BLACK,
+                );
+                // eprintln!("{}x{} -> {}", i, j, result.score);
+            }
+        }
+    }
+
+    fn show_solution(&mut self, ui: &mut eframe::egui::Ui) {
+        if self.positions.is_empty() {
+            return;
+        }
+
+        let offset = vec2(0.0, self.image.size()[1] as f32 + 100.0);
+
+        {
+            let img_size = self.image.size_vec2();
+            let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
+            let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
+            let rect = Rect::from_min_max(min, max);
+            ui.painter()
+                .rect_filled(rect, Rounding::default(), Color32::WHITE);
+        }
+
+        for (fig_id, pos) in self.positions.iter().enumerate() {
+            if let Some(positions) = pos {
+                for (p1, p2) in positions.iter().circular_tuple_windows() {
+                    let p1 = self.convert_to_screen(p1.pos2() + offset);
+                    let p2 = self.convert_to_screen(p2.pos2() + offset);
+
+                    ui.painter()
+                        .line_segment([p1, p2], Stroke::new(3.0, self.fig_colors[fig_id]))
+                }
+
+                let center = self.convert_to_screen(calc_center(positions).pos2() + offset);
+                ui.painter().text(
+                    center,
+                    Align2::CENTER_CENTER,
+                    fig_id.to_string(),
+                    FontId::new(20.0, FontFamily::Monospace),
+                    Color32::BLACK,
+                );
+            }
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
-        // {
-        //     ui.painter()
-        //         .add(Shape::rect_filled(rect, Rounding::none(), Color32::YELLOW));
-        // }
         {
             self.change_zoom(ui);
         }
 
-        self.show_white_background(ui);
+        if !self.show_image {
+            self.show_white_background(ui);
+        }
         self.show_parsed(ui);
 
-        if false {
+        if self.show_image {
             for pos in self.frame.iter() {
                 ui.painter().add(Shape::Circle(CircleShape::filled(
                     self.convert_to_screen(pos.clone()),
@@ -290,77 +416,7 @@ impl MyWidget {
             self.offset += drag_delta;
         }
 
-        let font_id = FontId::new(20.0, FontFamily::Monospace);
-
-        {
-            const X_OFFSET: f32 = 3000.0;
-            const MAX_OPTIONS: usize = 20;
-            const ONE_OPTION_SIZE: f32 = 250.0;
-
-            {
-                let min = self.convert_to_screen(pos2(X_OFFSET, 0.0));
-                let max = self.convert_to_screen(pos2(
-                    X_OFFSET + 1000.0,
-                    (MAX_OPTIONS as f32) * ONE_OPTION_SIZE,
-                ));
-                ui.painter().rect_filled(
-                    Rect::from_min_max(min, max),
-                    Rounding::default(),
-                    Color32::WHITE,
-                );
-            }
-
-            for i in 0..4 {
-                for j in 0..min(MAX_OPTIONS, self.matched_borders[i].len()) {
-                    let result = &self.matched_borders[i][j];
-
-                    let conv_point = |p: PointF| -> Pos2 {
-                        pos2(
-                            p.x as f32 + X_OFFSET + (i as f32) * ONE_OPTION_SIZE + 20.0,
-                            p.y as f32 + (j as f32) * ONE_OPTION_SIZE + 20.0,
-                        )
-                    };
-
-                    let draw = |pts: &[PointF], color: Color32| {
-                        for (p1, p2) in pts.iter().circular_tuple_windows() {
-                            let p1 = conv_point(*p1);
-                            let p2 = conv_point(*p2);
-                            ui.painter().line_segment(
-                                [self.convert_to_screen(p1), self.convert_to_screen(p2)],
-                                Stroke::new(2.0, color),
-                            );
-                            ui.painter()
-                                .circle_filled(self.convert_to_screen(p1), 3.0, color);
-                        }
-                    };
-
-                    draw(&result.lhs, Color32::BLUE);
-                    draw(&result.rhs, Color32::RED);
-                    ui.painter().text(
-                        self.convert_to_screen(conv_point(result.lhs_center)),
-                        Align2::CENTER_CENTER,
-                        result.lhs_id.to_string(),
-                        font_id.clone(),
-                        Color32::BLUE,
-                    );
-                    ui.painter().text(
-                        self.convert_to_screen(conv_point(result.rhs_center)),
-                        Align2::CENTER_CENTER,
-                        result.rhs_id.to_string(),
-                        font_id.clone(),
-                        Color32::RED,
-                    );
-                    ui.painter().text(
-                        self.convert_to_screen(conv_point(PointF::ZERO)),
-                        Align2::LEFT_TOP,
-                        format!("score = {:.3}", result.score),
-                        font_id.clone(),
-                        Color32::BLACK,
-                    );
-                    // eprintln!("{}x{} -> {}", i, j, result.score);
-                }
-            }
-        }
+        self.show_best_matched_borders(ui);
 
         if self.show_parsed {
             for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
@@ -371,43 +427,33 @@ impl MyWidget {
                     }
 
                     let center = self.convert_to_screen(figure.center.pos2());
+                    let color = if self.positions.is_empty() || self.positions[figure_id].is_none()
+                    {
+                        Color32::BLACK
+                    } else {
+                        Color32::RED
+                    };
                     ui.painter().text(
                         center,
                         Align2::CENTER_CENTER,
                         figure_id.to_string(),
                         FontId::new(20.0, FontFamily::Monospace),
-                        Color32::BLACK,
+                        color,
                     );
                 }
             }
         }
 
-        for (fig_id, pos) in self.positions.iter().enumerate() {
-            if let Some(positions) = pos {
-                for (p1, p2) in positions.iter().circular_tuple_windows() {
-                    let p1 = self.convert_to_screen(p1.pos2());
-                    let p2 = self.convert_to_screen(p2.pos2());
-
-                    ui.painter()
-                        .line_segment([p1, p2], Stroke::new(2.0, self.fig_colors[fig_id]))
-                }
-
-                let center = self.convert_to_screen(calc_center(positions).pos2());
-                ui.painter().text(
-                    center,
-                    Align2::CENTER_CENTER,
-                    fig_id.to_string(),
-                    FontId::new(20.0, FontFamily::Monospace),
-                    Color32::BLACK,
-                );
-            }
-        }
+        self.show_solution(ui);
 
         let frame = self.frame.clone();
-        if ui.input().key_pressed(Key::Enter) {
-            // dbg!("CROP!", &frame);
-            // crop(&self.image_path, &frame);
-            // dbg!("CROPED!");
+        if self.show_image {
+            if ui.input().key_pressed(Key::Enter) {
+                dbg!("CROP!", &frame);
+                crop(&self.image_path, &frame);
+                dbg!("CROPED!");
+                std::process::exit(0);
+            }
         }
 
         response

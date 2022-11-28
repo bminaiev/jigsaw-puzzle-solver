@@ -1,11 +1,13 @@
 use std::cmp::min;
 
+use eframe::epaint::{vec2, Vec2};
 use itertools::Itertools;
 
 use crate::{
     coordinate_system::CoordinateSystem,
     figure::Figure,
     point::{find_center, PointF},
+    utils::fmax,
 };
 
 // smaller -> better
@@ -56,18 +58,6 @@ impl MatchResult {
         lhs_id: usize,
         rhs_id: usize,
     ) -> Self {
-        let min_x = lhs
-            .iter()
-            .chain(rhs.iter())
-            .map(|p| p.x)
-            .min_by(|a, b| a.total_cmp(b))
-            .unwrap();
-        let min_y = lhs
-            .iter()
-            .chain(rhs.iter())
-            .map(|p| p.y)
-            .min_by(|a, b| a.total_cmp(b))
-            .unwrap();
         // let move_pts = |pts: Vec<PointF>| -> Vec<PointF> { pts.iter().map(|p| *p).collect() };
 
         // let lhs = move_pts(lhs);
@@ -80,6 +70,27 @@ impl MatchResult {
             rhs,
             lhs_id,
             rhs_id,
+        }
+    }
+
+    pub fn get_offset(&self) -> PointF {
+        let min_x = self
+            .lhs
+            .iter()
+            .chain(self.rhs.iter())
+            .map(|p| p.x)
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap();
+        let min_y = self
+            .lhs
+            .iter()
+            .chain(self.rhs.iter())
+            .map(|p| p.y)
+            .min_by(|a, b| a.total_cmp(b))
+            .unwrap();
+        PointF {
+            x: -min_x,
+            y: -min_y,
         }
     }
 }
@@ -187,6 +198,18 @@ pub fn local_optimize_coordinate_systems(
     cs
 }
 
+fn is_picture_border(pts: &[PointF]) -> bool {
+    let dir = *pts.last().unwrap() - pts[0];
+    let len = dir.len();
+    let dir = dir.norm();
+    let mut max_dist = 0.0;
+    for p in pts.iter() {
+        let dist = ((p.x - pts[0].x) * dir.y - dir.x * (p.y - pts[0].y)).abs();
+        max_dist = fmax(max_dist, dist);
+    }
+    max_dist < 0.1 * len
+}
+
 // TODO: use `Side` type
 pub fn match_borders(
     lhs_figure: &Figure,
@@ -199,6 +222,10 @@ pub fn match_borders(
     let lhs = get_figure_border(&lhs_figure, lhs_border_id);
     let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
     rhs.reverse();
+
+    if is_picture_border(&lhs) || is_picture_border(&rhs) {
+        return None;
+    }
 
     let to_cs = estimate_coordinate_system_by_border(&lhs)?;
     let from_cs_estimation = estimate_coordinate_system_by_border(&rhs)?;

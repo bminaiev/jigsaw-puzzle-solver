@@ -102,6 +102,13 @@ impl PointF {
     pub fn pos2(&self) -> Pos2 {
         pos2(self.x as f32, self.y as f32)
     }
+
+    pub fn rotate(&self, angle: f64) -> Self {
+        Self {
+            x: angle.cos() * self.x + angle.sin() * self.y,
+            y: -angle.sin() * self.x + angle.cos() * self.y,
+        }
+    }
 }
 
 impl std::ops::Add for PointF {

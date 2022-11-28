@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    cmp::{max, min},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     f32::consts::PI,
 };
 
@@ -190,7 +191,12 @@ fn find_corners_positions(points: &[Point]) -> Vec<usize> {
     filter_4_corners(&points, &corners)
 }
 
-fn bfs(pts: &[Point], max_dist: usize) -> BTreeMap<Point, usize> {
+fn bfs(
+    pts: &[Point],
+    max_dist: usize,
+    inside_bb: (Point, Point),
+    cant_move_here: BTreeSet<Point>,
+) -> BTreeMap<Point, usize> {
     let mut res = BTreeMap::new();
     let mut queue = VecDeque::new();
     for p in pts.iter() {
@@ -203,7 +209,13 @@ fn bfs(pts: &[Point], max_dist: usize) -> BTreeMap<Point, usize> {
             continue;
         }
         for next in p.neighbours() {
-            if !res.contains_key(&next) {
+            if !res.contains_key(&next)
+                && next.x >= inside_bb.0.x
+                && next.x <= inside_bb.1.x
+                && next.y >= inside_bb.0.y
+                && next.y <= inside_bb.1.y
+                && !cant_move_here.contains(&next)
+            {
                 res.insert(next, cur_dist + 1);
                 queue.push_back(next);
             }
@@ -212,16 +224,70 @@ fn bfs(pts: &[Point], max_dist: usize) -> BTreeMap<Point, usize> {
     res
 }
 
+fn find_bouning_box(pts: &[Point]) -> (Point, Point) {
+    let mut from = Point {
+        x: usize::MAX,
+        y: usize::MAX,
+    };
+    let mut to = Point { x: 0, y: 0 };
+    for p in pts.iter() {
+        from.x = min(from.x, p.x);
+        from.y = min(from.y, p.y);
+        to.x = max(to.x, p.x);
+        to.y = max(to.y, p.y);
+    }
+    (from, to)
+}
+
+fn add_inside(pts: &[Point]) -> Vec<Point> {
+    let (from, to) = find_bouning_box(pts);
+    let cant_move_here: BTreeSet<_> = pts.iter().cloned().collect();
+    let mut queue = vec![];
+    for x in from.x..=to.x {
+        for y in from.y..=to.y {
+            if x == from.x || x == to.x || y == from.y || y == to.y {
+                let p = Point { x, y };
+                if !cant_move_here.contains(&p) {
+                    queue.push(p);
+                }
+            }
+        }
+    }
+    let bfs_res = bfs(&queue, usize::MAX, (from, to), cant_move_here);
+    let mut res = vec![];
+    for x in from.x..=to.x {
+        for y in from.y..=to.y {
+            let p = Point { x, y };
+            if !bfs_res.contains_key(&p) {
+                res.push(p);
+            }
+        }
+    }
+    res
+}
+
 impl Figure {
     pub fn new(pts: &[Point]) -> Option<Self> {
-        const MAX_DIST: usize = 2;
-        let dist_by_pts = bfs(pts, MAX_DIST);
+        let pts = add_inside(pts);
+        const MAX_DIST: usize = 1;
+        let dist_by_pts = bfs(
+            &pts,
+            MAX_DIST,
+            (
+                Point { x: 0, y: 0 },
+                Point {
+                    x: usize::MAX,
+                    y: usize::MAX,
+                },
+            ),
+            BTreeSet::new(),
+        );
         let border = dist_by_pts
             .iter()
             .filter_map(|(&k, &v)| if v == MAX_DIST { Some(k) } else { None })
             .collect_vec();
 
-        if border.len() <= 50 {
+        if border.len() <= 50 || border.len() > 1000 {
             return None;
         }
 

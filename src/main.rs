@@ -3,10 +3,10 @@
 
 use std::fs;
 
-use eframe::egui;
+use eframe::{egui, epaint::pos2};
 
 use crate::{
-    borders_graph::Graph, graph_solver::solve_graph, my_widget::MyWidget,
+    borders_graph::Graph, crop::crop, graph_solver::solve_graph, my_widget::MyWidget,
     parsed_puzzles::ParsedPuzzles, placement::Placement, point::PointF,
     surface_placer::place_on_surface, utils::load_image_from_path,
 };
@@ -28,22 +28,34 @@ mod surface_placer;
 mod topn;
 mod utils;
 
-const PATH: &str = "img/crop_only_white_and_start.jpg";
+const BEFORE_CROP_PATH: &str = "img/prod/15.jpg";
+const PATH: &str = "img/crop.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
-const LOAD_EXISTING_SOLUTION: bool = true;
+const LOAD_EXISTING_SOLUTION: bool = false;
+
+const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 590;
 
 // TODO: nicer type
-fn main_ui(positions: Vec<Option<Vec<PointF>>>) {
+fn main_ui(
+    positions: Vec<Option<Vec<PointF>>>,
+    path: &str,
+    show_parsed: bool,
+    show_image: bool,
+    show_matched_borders: bool,
+) {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(1400.0, 1100.0)),
         ..Default::default()
     };
-    eframe::run_native(
-        "jigsaw solver",
-        options,
-        Box::new(|_cc| Box::new(MyApp::new(positions, false))),
-    );
+    let app_created = Box::new(MyApp::new(
+        positions,
+        path,
+        show_parsed,
+        show_image,
+        show_matched_borders,
+    ));
+    eframe::run_native("jigsaw solver", options, Box::new(|_| app_created));
 }
 
 fn main_build_graph() {
@@ -68,13 +80,32 @@ fn main_load_graph() {
     let placement = Placement::from_full_graph(&solution_graph);
     let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
     eprintln!("positions generated!");
-    main_ui(positions);
+    main_ui(positions, PATH, true, false, true);
+}
+
+fn main_before_crop() {
+    main_ui(vec![], BEFORE_CROP_PATH, false, true, false);
+}
+
+fn main_check_parsing() {
+    main_ui(vec![], PATH, true, false, true);
+}
+
+fn main_check_crop() {
+    let pts = [
+        pos2(1576.5, 1072.4),
+        pos2(2631.0, 1469.2),
+        pos2(1682.6, 3007.4),
+        pos2(364.4, 2241.2),
+    ];
+    crop(BEFORE_CROP_PATH, &pts);
 }
 
 fn main() {
+    // main_before_crop();
+    // main_check_parsing();
     // main_build_graph();
     main_load_graph();
-    // main_ui(vec![]);
 }
 
 struct MyApp {
@@ -82,9 +113,21 @@ struct MyApp {
 }
 
 impl MyApp {
-    fn new(positions: Vec<Option<Vec<PointF>>>, show_parsed: bool) -> Self {
+    fn new(
+        positions: Vec<Option<Vec<PointF>>>,
+        path: &str,
+        show_parsed: bool,
+        show_image: bool,
+        show_matched_borders: bool,
+    ) -> Self {
         Self {
-            my_widget: MyWidget::new(PATH, positions, show_parsed),
+            my_widget: MyWidget::new(
+                path,
+                positions,
+                show_parsed,
+                show_image,
+                show_matched_borders,
+            ),
         }
     }
 }

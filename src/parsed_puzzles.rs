@@ -6,7 +6,7 @@ use std::{
 use eframe::epaint::{Color32, ColorImage};
 use rand::Rng;
 
-use crate::{dsu::Dsu, figure::Figure, point::Point};
+use crate::{dsu::Dsu, figure::Figure, point::Point, PUZZLE_PIXEL_WHITE_THRESHOLD};
 
 #[derive(Hash)]
 pub struct ParsedPuzzles {
@@ -16,7 +16,8 @@ pub struct ParsedPuzzles {
 }
 
 fn is_puzzle_color(color: Color32) -> bool {
-    (color.r() as usize) + (color.g() as usize) + (color.b() as usize) >= 630
+    (color.r() as usize) + (color.g() as usize) + (color.b() as usize)
+        >= PUZZLE_PIXEL_WHITE_THRESHOLD
 }
 
 impl ParsedPuzzles {
@@ -60,11 +61,15 @@ impl ParsedPuzzles {
 
         let mut res_figures = vec![];
 
+        eprintln!("Start parsing figures...");
+
         for i in 0..dsu_figures.len() {
             if let Some(figure) = Figure::new(&dsu_figures[i]) {
                 res_figures.push(figure);
             }
         }
+
+        eprintln!("Found {} figures", res_figures.len());
 
         res_figures.sort_by_key(|f| (f.center.y, f.center.x));
 
@@ -82,7 +87,9 @@ impl ParsedPuzzles {
         for figure in self.figures.iter() {
             let color = Color32::from_rgb(rng.gen(), rng.gen(), rng.gen());
             for p in figure.all_pts.iter() {
-                res[(p.x, p.y)] = color;
+                if p.x < self.width && p.y < self.height {
+                    res[(p.x, p.y)] = color;
+                }
             }
             let border_color = if figure.good_border {
                 Color32::BLACK
@@ -90,7 +97,9 @@ impl ParsedPuzzles {
                 Color32::RED
             };
             for p in figure.border.iter() {
-                res[(p.x, p.y)] = border_color;
+                if p.x < self.width && p.y < self.height {
+                    res[(p.x, p.y)] = border_color;
+                }
             }
             // res[(figure.center.x, figure.center.y)] = Color32::BLUE;
         }

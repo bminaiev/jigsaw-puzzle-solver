@@ -1,4 +1,4 @@
-use eframe::epaint::{pos2, Pos2};
+use eframe::epaint::{pos2, vec2, Pos2};
 use image::{GenericImageView, ImageBuffer};
 
 #[derive(Clone, Copy)]
@@ -99,48 +99,142 @@ fn calc_intersection_area(mut pts: Vec<Pos2>, x: f32, y: f32, debug: bool) -> f3
     area(&pts)
 }
 
+fn gauss(matrix: &mut [Vec<f64>]) -> Vec<f64> {
+    for c in 0..matrix[0].len() - 1 {
+        let mut best_r = c;
+        for r in c..matrix.len() {
+            if matrix[r][c].abs() > matrix[best_r][c].abs() {
+                best_r = r;
+            }
+        }
+        matrix.swap(c, best_r);
+        assert!(matrix[c][c] != 0.0);
+        let mul = 1.0 / matrix[c][c];
+        for x in matrix[c].iter_mut() {
+            *x *= mul;
+        }
+        for r2 in 0..matrix.len() {
+            if r2 == c {
+                continue;
+            }
+            let mul = matrix[r2][c];
+            for c2 in 0..matrix[r2].len() {
+                matrix[r2][c2] -= mul * matrix[c][c2];
+            }
+        }
+    }
+    let mut res = vec![0.0; matrix.len()];
+    for i in 0..res.len() {
+        res[i] = -matrix[i].last().unwrap();
+    }
+    res
+}
+
+struct TransofmationMatrix {
+    a: Vec<Vec<f64>>,
+}
+
+impl TransofmationMatrix {
+    pub fn from_gauss_result(gauss_res: &[f64]) -> Self {
+        let mut a = vec![vec![1.0; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                let id = i * 3 + j;
+                if id < 8 {
+                    a[i][j] = gauss_res[id];
+                }
+            }
+        }
+        Self { a }
+    }
+
+    fn transform_point(&self, p: Pos2) -> Pos2 {
+        let mult = [p.x as f64, p.y as f64, 1.0];
+        let mut res = [0.0; 3];
+        for row in 0..3 {
+            for col in 0..3 {
+                res[row] += self.a[row][col] * mult[col];
+            }
+        }
+        pos2((res[0] / res[2]) as f32, (res[1] / res[2]) as f32)
+    }
+}
+
+fn find_transformation_matrix(frame: &[Pos2], new_width: f32) -> TransofmationMatrix {
+    let sz = 13;
+    let mut a = vec![vec![vec![0.0; sz]; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            let id = i * 3 + j;
+            if id == 8 {
+                a[i][j][sz - 1] = 1.0;
+            } else {
+                a[i][j][id] = 1.0;
+            }
+        }
+    }
+    let target_points = [
+        pos2(0.0, 0.0),
+        pos2(new_width, 0.0),
+        pos2(new_width, new_width),
+        pos2(0.0, new_width),
+    ];
+    let mut matrix = vec![];
+    for (pt_id, (my, target)) in frame.iter().zip(target_points.iter()).enumerate() {
+        for row in 0..3 {
+            let mut new_row = vec![0.0; sz];
+            let b = [my.x as f64, my.y as f64, 1.0];
+
+            for col in 0..3 {
+                for t in 0..sz {
+                    new_row[t] += a[row][col][t] * b[col];
+                }
+            }
+
+            let k_coef = if row == 0 {
+                target.x as f64
+            } else if row == 1 {
+                target.y as f64
+            } else {
+                1.0
+            };
+            new_row[8 + pt_id] -= k_coef;
+            matrix.push(new_row);
+        }
+    }
+    let gauss_res = gauss(&mut matrix);
+    let tranformation_matrix = TransofmationMatrix::from_gauss_result(&gauss_res);
+    for (my, target) in frame.iter().zip(target_points.iter()) {
+        let new_target = tranformation_matrix.transform_point(*my);
+        eprintln!("target = {:?}, got = {:?}", target, new_target);
+    }
+    tranformation_matrix
+}
+
 pub fn crop(path: &str, frame: &[Pos2]) {
     let image = image::open(path).unwrap();
-    let w = image.width() as f32;
-    let h = image.height() as f32;
+    eprintln!("crop points: {:?}", frame);
 
-    // let frame = vec![pos2(100.0, 100.0), pos2(w, 0.0), pos2(w, h), pos2(0.0, h)];
+    const NEW_WIDTH: usize = 2000;
 
-    let new_width = ((frame[0].distance(frame[1]) + frame[2].distance(frame[3])) / 2.0) as usize;
-    let new_height = ((frame[1].distance(frame[2]) + frame[3].distance(frame[0])) / 2.0) as usize;
+    let matrix = find_transformation_matrix(frame, NEW_WIDTH as f32);
 
-    let pt = |from: Pos2, to: Pos2, pos: usize, max_pos: usize| -> Pos2 {
-        let left = pos as f32;
-        let total = max_pos as f32;
-        let right = total - left;
-        pos2(
-            (from.x * right + to.x * left) / total,
-            (from.y * right + to.y * left) / total,
-        )
-    };
-    dbg!(new_height, new_width);
-    let mut new_img = ImageBuffer::new(new_width as u32, new_height as u32);
-    for x in 0..new_width {
-        for y in 0..new_height {
-            let offsets = [x, y, new_width - x - 1, new_height - y - 1];
-            let max_len = [new_width, new_height, new_width, new_height];
-            let mut points = Vec::with_capacity(offsets.len() * 2);
-            for i in 0..offsets.len() {
-                let fr = frame[i];
-                let to = frame[(i + 1) % frame.len()];
-                let p1 = pt(fr, to, offsets[i], max_len[i]);
-                let p2 = pt(fr, to, offsets[i] + 1, max_len[i]);
-                points.push(p1);
-                points.push(p2);
-            }
-            let l1 = Line::new(points[0], points[5]);
-            let l2 = Line::new(points[1], points[4]);
-            let l3 = Line::new(points[2], points[7]);
-            let l4 = Line::new(points[3], points[6]);
-            let p1 = intersection(l1, l3);
-            let p2 = intersection(l2, l3);
-            let p3 = intersection(l2, l4);
-            let p4 = intersection(l1, l4);
+    let w = image.width();
+    let h = image.height();
+
+    let mut new_img_comps = vec![vec![[0.0; 3]; NEW_WIDTH]; NEW_WIDTH];
+    let mut new_img_area = vec![vec![0.0; NEW_WIDTH]; NEW_WIDTH];
+
+    for x in 0..w {
+        for y in 0..h {
+            let pixel = image.get_pixel(x, y);
+
+            let p = pos2(x as f32, y as f32);
+            let p1 = matrix.transform_point(p);
+            let p2 = matrix.transform_point(p + vec2(1.0, 0.0));
+            let p3 = matrix.transform_point(p + vec2(1.0, 1.0));
+            let p4 = matrix.transform_point(p + vec2(0.0, 1.0));
+
             let pts = vec![p1, p2, p3, p4];
             let calc = |f: fn(&Pos2) -> usize| -> (usize, usize) {
                 let mut coords: Vec<_> = pts.iter().map(f).collect();
@@ -150,32 +244,32 @@ pub fn crop(path: &str, frame: &[Pos2]) {
             let (xmin, xmax) = calc(|p| p.x as usize);
             let (ymin, ymax) = calc(|p| p.y as usize);
             let mut sum_area = 0.0;
-            let mut res_color = [0.0, 0.0, 0.0];
+            let expected_sum_area = area(&pts);
             for x in xmin..=xmax {
                 for y in ymin..=ymax {
                     let area = calc_intersection_area(pts.clone(), x as f32, y as f32, false);
                     sum_area += area;
-                    if x >= image.width() as usize || y >= image.height() as usize {
+                    if x >= NEW_WIDTH as usize || y >= NEW_WIDTH as usize {
                         continue;
                     }
-                    let pixel = image.get_pixel(x as u32, y as u32);
                     for i in 0..3 {
-                        res_color[i] += (pixel.0[i] as f32) * area;
+                        new_img_comps[x][y][i] += area * (pixel.0[i] as f32);
                     }
+                    new_img_area[x][y] += area;
                 }
             }
-            if (sum_area == 0.0) {
-                dbg!(sum_area);
-                dbg!(x);
-                dbg!(y);
+            if (sum_area - expected_sum_area).abs() > 0.1 {
+                // dbg!(sum_area, expected_sum_area, xmin, xmax, ymin, ymax);
+                // assert!(false);
+            }
+        }
+    }
 
-                for x in xmin..xmax {
-                    for y in ymin..ymax {
-                        let area = calc_intersection_area(pts.clone(), x as f32, y as f32, true);
-                        dbg!(x, y, area);
-                    }
-                }
-            }
+    let mut new_img = ImageBuffer::new(NEW_WIDTH as u32, NEW_WIDTH as u32);
+    for x in 0..NEW_WIDTH {
+        for y in 0..NEW_WIDTH {
+            let mut res_color = new_img_comps[x][y].clone();
+            let sum_area = new_img_area[x][y];
             assert!(sum_area > 0.001);
             for i in 0..3 {
                 res_color[i] /= sum_area;
