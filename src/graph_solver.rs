@@ -6,18 +6,8 @@ use std::{
 use itertools::Itertools;
 
 use crate::{
-    border_matcher::{local_optimize_coordinate_systems, match_borders, match_placed_borders},
-    borders_graph::Graph,
-    coordinate_system::CoordinateSystem,
-    dsu::Dsu,
-    figure::Figure,
-    parsed_puzzles::ParsedPuzzles,
-    placement::{self, Placement},
-    point::{Point, PointF},
-    rects_fitter::{self, RectsFitter},
-    surface_placer::place_on_surface,
-    topn::TopN,
-    utils::{fmax, Side},
+    borders_graph::Graph, parsed_puzzles::ParsedPuzzles, placement::Placement, topn::TopN,
+    utils::Side,
 };
 
 #[derive(Clone, Debug)]
@@ -44,12 +34,10 @@ impl SearchState {
             vertices.insert(s1.fig);
             vertices.insert(s2.fig);
         }
-        let max_bb_edge = max(bb.0, bb.1);
-        let min_bb_edge = min(bb.0, bb.1);
-        let score = (all_edges.len() as f64)
-            / (max(1, vertices.len()) as f64)
-            / (max_bb_edge as f64).powf(2.0)
-            / (min_bb_edge as f64).powf(1.0);
+        let max_bb_edge = max(bb.0, bb.1) as f64;
+        let min_bb_edge = min(bb.0, bb.1) as f64;
+        let bb_coef = min_bb_edge + 2.0 * max_bb_edge;
+        let score = (all_edges.len() as f64) / (max(1, vertices.len()) as f64);
         Self {
             all_edges,
             vertices,
@@ -91,7 +79,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
 
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
-    const MAX_DIST: f64 = 1.5;
+    const MAX_DIST: f64 = 1.0;
     const MAX_DIST_MULIPLIERS: [f64; 5] = [0.0, 1.0, 1.1, 1.3, 2.0];
 
     let mut twos = vec![];
@@ -123,11 +111,11 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
         };
 
-    const MAX_CNT: usize = 2000;
+    const MAX_CNT: usize = 10;
     let mut pq = vec![TopN::new(MAX_CNT); graph.n + 1];
     // pq[0].push(SearchState::new(vec![], 0.0));
 
-    {
+    let start_vertices_num = {
         let mut start_state_edges = vec![];
         for e in graph.all_edges.iter() {
             if e.existing_edge {
@@ -145,16 +133,23 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             }
         }
         let new_state = SearchState::new(start_state_edges, 0.0, (1, 1));
-        eprintln!("start vertices: {}", new_state.vertices.len());
-        pq[new_state.vertices.len()].insert(new_state);
-    }
+        let start_vertices = new_state.vertices.len();
+        eprintln!("start vertices: {start_vertices}");
+        pq[start_vertices].insert(new_state);
+        start_vertices
+    };
 
-    const MAX_V: usize = 60;
-    for cnt_vertices in 0..min(MAX_V, pq.len()) {
+    let max_v = start_vertices_num + 50;
+    let mut last_state = None;
+    for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
         let mut gg = 0;
 
         let cur_pq = std::mem::replace(&mut pq[cnt_vertices], TopN::new(0));
+
+        if let Some(cur_best) = cur_pq.get_best() {
+            last_state = Some(cur_best);
+        }
 
         for state in cur_pq.set.iter().rev() {
             let cur_placement = gen_placement(&state);
@@ -204,8 +199,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         }
     }
 
-    let state = pq[MAX_V].set.iter().next().unwrap();
-    let placement = gen_placement(state);
+    let placement = gen_placement(&last_state.unwrap());
     graph.get_subgraph(&placement)
     //
 }

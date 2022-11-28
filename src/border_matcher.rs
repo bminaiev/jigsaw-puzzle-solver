@@ -144,7 +144,7 @@ pub fn local_optimize_coordinate_systems(
     ];
     let mut cs = start_cs.to_vec();
     let mut changed_steps = 0;
-    const MAX_CHANGED_STEPS: usize = 50;
+    const MAX_CHANGED_STEPS: usize = 5;
     while start_coord_step > MIN_EPS || dir_step > MIN_EPS {
         changed_steps += 1;
         if changed_steps > MAX_CHANGED_STEPS {

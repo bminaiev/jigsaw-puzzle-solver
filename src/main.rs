@@ -103,9 +103,9 @@ fn main_check_crop() {
 
 fn main() {
     // main_before_crop();
-    main_check_parsing();
+    // main_check_parsing();
     // main_build_graph();
-    // main_load_graph();
+    main_load_graph();
 }
 
 struct MyApp {

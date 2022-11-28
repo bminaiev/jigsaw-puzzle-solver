@@ -25,4 +25,8 @@ impl<T: Clone + Ord> TopN<T> {
             self.set.remove(&self.set.iter().next().unwrap().clone());
         }
     }
+
+    pub(crate) fn get_best(&self) -> Option<T> {
+        self.set.iter().next_back().cloned()
+    }
 }

@@ -186,36 +186,42 @@ fn local_optimize_positions(
     }
 }
 
-fn rotate_component(component: &[usize], positions: &mut Vec<Option<Vec<PointF>>>) {
+fn rotate_component(
+    component: &[usize],
+    positions: &mut Vec<Option<Vec<PointF>>>,
+    graph: &Graph,
+    parsed_puzzles: &ParsedPuzzles,
+) {
     let mut all_points: Vec<PointF> = vec![];
     for &c in component.iter() {
         all_points.extend(&positions[c].as_ref().unwrap().clone());
     }
-    let calc_bbox = |angle: f64| -> (f64, f64) {
-        let rotated_points = all_points.iter().map(|p| p.rotate(angle)).collect_vec();
-        let mut minx = f64::MAX;
-        let mut maxx = -f64::MAX;
-        let mut miny = f64::MAX;
-        let mut maxy = -f64::MAX;
-        for p in rotated_points.iter() {
-            minx = fmin(minx, p.x);
-            maxx = fmax(maxx, p.x);
-            miny = fmin(miny, p.y);
-            maxy = fmax(maxy, p.y);
+    let probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
+    let calc_score = |angle: f64| -> f64 {
+        let mut res = 0.0;
+
+        for &c in component.iter() {
+            if !probably_correct_dir[c] {
+                continue;
+            }
+            let (p1, p2) = parsed_puzzles.figures[c].get_cs_points();
+            let (p1, p2) = (p1.conv_f64(), p2.conv_f64());
+            let (i1, i2) = parsed_puzzles.figures[c].get_cs_points_indexes();
+            let p3 = positions[c].as_ref().unwrap()[i1].rotate(angle);
+            let p4 = positions[c].as_ref().unwrap()[i2].rotate(angle);
+            let dir1 = (p2 - p1).norm();
+            let dir2 = (p4 - p3).norm();
+            res += dir1.x * dir2.x + dir1.y * dir2.y;
         }
-        (maxx - minx, maxy - miny)
+        res
     };
-    let mut best_area = f64::MAX;
+    let mut best_score = -f64::MAX;
     let mut best_angle = 0.0;
     const STEPS: usize = 1000;
-    for angle in (0..STEPS).map(|step| (step as f64) * PI / (STEPS as f64)) {
-        let (dx, dy) = calc_bbox(angle);
-        if dx < dy {
-            continue;
-        }
-        let area = dx * dy;
-        if area < best_area {
-            best_area = area;
+    for angle in (0..STEPS).map(|step| (step as f64) * PI * 2.0 / (STEPS as f64)) {
+        let score = calc_score(angle);
+        if score > best_score {
+            best_score = score;
             best_angle = angle;
         }
     }
@@ -231,6 +237,7 @@ fn place_one_connected_component(
     component: &[usize],
     used_edges: &[(Side, Side)],
     positions: &mut Vec<Option<Vec<PointF>>>,
+    graph: &Graph,
 ) {
     let mut matched_borders = BTreeMap::new();
 
@@ -347,7 +354,7 @@ fn place_one_connected_component(
     eprintln!("Do local optimizations!");
     local_optimize_positions(used_edges, positions, parsed_puzzles, component);
     eprintln!("Rotate component!");
-    rotate_component(component, positions);
+    rotate_component(component, positions, graph, parsed_puzzles);
 }
 
 pub fn place_on_surface(
@@ -380,7 +387,13 @@ pub fn place_on_surface(
             .cloned()
             .collect_vec();
 
-        place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions);
+        place_one_connected_component(
+            parsed_puzzles,
+            &cur_component,
+            &used_edges,
+            &mut positions,
+            graph,
+        );
 
         {
             let new_pts = cur_component
