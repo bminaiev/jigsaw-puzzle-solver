@@ -28,13 +28,13 @@ mod surface_placer;
 mod topn;
 mod utils;
 
-const BEFORE_CROP_PATH: &str = "img/prod/16.jpg";
+const BEFORE_CROP_PATH: &str = "img/prod/22.jpg";
 const PATH: &str = "img/crop.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
 const LOAD_EXISTING_SOLUTION: bool = false;
 
-const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 560;
+const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 460;
 
 // TODO: nicer type
 fn main_ui(
@@ -102,10 +102,10 @@ fn main_check_crop() {
 }
 
 fn main() {
-    // main_before_crop();
+    main_before_crop();
     // main_check_parsing();
     // main_build_graph();
-    main_load_graph();
+    // main_load_graph();
 }
 
 struct MyApp {

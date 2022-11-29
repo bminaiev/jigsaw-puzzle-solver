@@ -142,7 +142,7 @@ impl ParsedPuzzles {
         eprintln!("Start parsing figures...");
         let mut figure_sizes = vec![];
         for fig in dsu_figures.iter() {
-            if !fig.is_empty() {
+            if fig.len() >= 333 {
                 figure_sizes.push(fig.len());
             }
         }

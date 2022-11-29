@@ -111,7 +111,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
         };
 
-    const MAX_CNT: usize = 10;
+    const MAX_CNT: usize = 100;
     let mut pq = vec![TopN::new(MAX_CNT); graph.n + 1];
     // pq[0].push(SearchState::new(vec![], 0.0));
 
@@ -139,7 +139,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         start_vertices
     };
 
-    let max_v = start_vertices_num + 50;
+    let max_v = start_vertices_num + 80;
     let mut last_state = None;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
