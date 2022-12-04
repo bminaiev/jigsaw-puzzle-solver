@@ -6,11 +6,18 @@ use std::fs;
 use eframe::{egui, epaint::pos2};
 
 use crate::{
-    borders_graph::Graph, crop::crop, graph_solver::solve_graph, my_widget::MyWidget,
-    parsed_puzzles::ParsedPuzzles, placement::Placement, point::PointF,
-    surface_placer::place_on_surface, utils::load_image_from_path,
+    borders_graph::Graph,
+    crop::crop,
+    graph_solver::{solve_graph, solve_graph_border},
+    my_widget::MyWidget,
+    parsed_puzzles::ParsedPuzzles,
+    placement::Placement,
+    point::PointF,
+    surface_placer::place_on_surface,
+    utils::load_image_from_path,
 };
 
+mod average_color;
 mod border_matcher;
 mod borders_graph;
 mod coordinate_system;
@@ -28,8 +35,8 @@ mod surface_placer;
 mod topn;
 mod utils;
 
-const BEFORE_CROP_PATH: &str = "img/prod/22.jpg";
-const PATH: &str = "img/crop.jpg";
+const BEFORE_CROP_PATH: &str = "img/prod2/4.jpg";
+const PATH: &str = "img/prod2/crop_join.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
 const LOAD_EXISTING_SOLUTION: bool = false;
@@ -73,7 +80,7 @@ fn main_load_graph() {
     let solution_graph = if LOAD_EXISTING_SOLUTION {
         serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap()
     } else {
-        let res = solve_graph(&graph, &parsed_puzzles);
+        let res = solve_graph_border(&graph, &parsed_puzzles);
         fs::write(GRAPH_SOLUTION_PATH, serde_json::to_string(&res).unwrap()).unwrap();
         res
     };
@@ -88,7 +95,7 @@ fn main_before_crop() {
 }
 
 fn main_check_parsing() {
-    main_ui(vec![], PATH, true, false, true);
+    main_ui(vec![], PATH, true, true, true);
 }
 
 fn main_check_crop() {
@@ -102,10 +109,10 @@ fn main_check_crop() {
 }
 
 fn main() {
-    main_before_crop();
+    // main_before_crop();
     // main_check_parsing();
     // main_build_graph();
-    // main_load_graph();
+    main_load_graph();
 }
 
 struct MyApp {

@@ -120,7 +120,7 @@ impl Graph {
 
     pub fn gen_adj_matrix(&self) -> Array4<f64> {
         let n = self.n;
-        let mut dist = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 10.0);
+        let mut dist = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 50.0);
         for edge in self.all_edges.iter() {
             dist[[edge.fig1, edge.side1, edge.fig2, edge.side2]] = edge.score;
             dist[[edge.fig2, edge.side2, edge.fig1, edge.side1]] = edge.score;

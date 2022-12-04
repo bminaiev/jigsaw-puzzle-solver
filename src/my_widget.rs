@@ -199,6 +199,9 @@ impl MyWidget {
                 mesh.add_rect_with_uv(rect, uv, Color32::WHITE);
                 ui.painter().add(Shape::mesh(mesh));
             } else {
+            }
+
+            {
                 let texture_id2 = self.mask_image.texture_id(&ui.ctx());
                 let mut mesh2 = Mesh::with_texture(texture_id2);
                 mesh2.add_rect_with_uv(rect, uv, Color32::WHITE);

@@ -198,7 +198,7 @@ pub fn local_optimize_coordinate_systems(
     cs
 }
 
-fn is_picture_border(pts: &[PointF]) -> bool {
+fn is_picture_border_impl(pts: &[PointF]) -> bool {
     let dir = *pts.last().unwrap() - pts[0];
     let len = dir.len();
     let dir = dir.norm();
@@ -208,6 +208,11 @@ fn is_picture_border(pts: &[PointF]) -> bool {
         max_dist = fmax(max_dist, dist);
     }
     max_dist < 0.1 * len
+}
+
+pub fn is_picture_border(figure: &Figure, border_id: usize) -> bool {
+    let pts = get_figure_border(figure, border_id);
+    is_picture_border_impl(&pts)
 }
 
 // TODO: use `Side` type
@@ -223,7 +228,7 @@ pub fn match_borders(
     let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
     rhs.reverse();
 
-    if is_picture_border(&lhs) || is_picture_border(&rhs) {
+    if is_picture_border_impl(&lhs) || is_picture_border_impl(&rhs) {
         return None;
     }
 

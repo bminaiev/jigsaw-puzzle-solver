@@ -15,6 +15,7 @@ pub struct Figure {
     pub good_border: bool,
     pub center: Point,
     pub corner_positions: Vec<usize>,
+    pub good_size: bool,
 }
 
 fn find_cycle(points: &[Point]) -> Vec<Point> {
@@ -306,12 +307,13 @@ impl Figure {
             border: cycle,
             good_border: max_dist2 <= 10,
             center,
+            good_size: true,
         };
         Some(res)
     }
 
     pub fn is_good_puzzle(&self) -> bool {
-        self.good_border && self.corner_positions.len() == 4
+        self.good_border && self.corner_positions.len() == 4 && self.good_size
     }
 
     pub fn get_cs_points_indexes(&self) -> (usize, usize) {

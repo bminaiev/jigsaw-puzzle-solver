@@ -2,6 +2,8 @@ use std::{
     cmp::min,
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
+    ops::Range,
+    process,
 };
 
 use eframe::epaint::{Color32, ColorImage};
@@ -9,7 +11,12 @@ use itertools::Itertools;
 use rand::Rng;
 
 use crate::{
-    dsu::Dsu, figure::Figure, point::Point, utils::save_color_image, PUZZLE_PIXEL_WHITE_THRESHOLD,
+    average_color::{self, AverareColor},
+    dsu::Dsu,
+    figure::Figure,
+    point::Point,
+    utils::save_color_image,
+    PUZZLE_PIXEL_WHITE_THRESHOLD,
 };
 
 #[derive(Hash)]
@@ -82,12 +89,33 @@ fn split_into_figures(
     return res;
 }
 
-fn save_debug(color_image: &ColorImage, limit: usize) {
+fn get_sum(color: Color32) -> i32 {
+    (color.r() as i32) + (color.g() as i32) + (color.b() as i32)
+}
+
+fn is_puzzle_pixel(
+    color_image: &ColorImage,
+    average_color: &AverareColor,
+    r: usize,
+    offset: i32,
+    x: usize,
+    y: usize,
+) -> bool {
+    let c1 = color_image[(x, y)];
+    let c_av = average_color.get_averare_color(x, y, r);
+
+    get_sum(c1) > get_sum(c_av) + offset
+}
+
+fn save_debug(color_image: &ColorImage, average_color: &AverareColor, r: usize, offset: i32) {
     let mut res = ColorImage::new(color_image.size, Color32::WHITE);
 
     for x in 0..color_image.size[0] {
         for y in 0..color_image.size[1] {
-            if get_color_score(color_image[(x, y)]) >= limit {
+            let c1 = color_image[(x, y)];
+            let c_av = average_color.get_averare_color(x, y, r);
+
+            if get_sum(c1) > get_sum(c_av) + offset {
                 res[(x, y)] = Color32::BLACK;
             } else {
                 res[(x, y)] = Color32::WHITE;
@@ -95,11 +123,35 @@ fn save_debug(color_image: &ColorImage, limit: usize) {
         }
     }
 
-    save_color_image(&res, &format!("img/debug/{limit}.jpg"));
+    save_color_image(&res, &format!("img/debug/debug-r={r},o={offset}.jpg"));
+}
+
+fn good_size_range(figures: &[Figure]) -> Range<usize> {
+    let mut sizes = vec![];
+    for figure in figures.iter() {
+        if figure.is_good_puzzle() {
+            sizes.push(figure.all_pts.len());
+        }
+    }
+    sizes.sort();
+    let med = sizes[sizes.len() / 2];
+    med * 2 / 3..med * 4 / 3
 }
 
 impl ParsedPuzzles {
     pub fn new(color_image: &ColorImage) -> Self {
+        let average_color = AverareColor::new(color_image);
+        const R: usize = 100;
+        const OFFSET: i32 = 100;
+
+        // for &r in [25, 50, 100, 200].iter() {
+        //     for &offset in [20, 50, 100, 200].iter() {
+        //         save_debug(color_image, &average_color, r, offset);
+        //     }
+        // }
+
+        // process::exit(0);
+
         let width = color_image.size[0];
         let height = color_image.size[1];
 
@@ -108,7 +160,7 @@ impl ParsedPuzzles {
 
         for x in 0..width {
             for y in 0..height {
-                if is_puzzle_color(color_image[(x, y)]) {
+                if is_puzzle_pixel(color_image, &average_color, R, OFFSET, x, y) {
                     is_puzzle[id(x, y)] = true;
                 }
             }
@@ -164,6 +216,14 @@ impl ParsedPuzzles {
         }
 
         eprintln!("Found {} figures", res_figures.len());
+        let good_sizes = good_size_range(&res_figures);
+        for fig in res_figures.iter_mut() {
+            if !good_sizes.contains(&fig.all_pts.len()) {
+                fig.good_size = false;
+            }
+        }
+        let good_figures = res_figures.iter().filter(|f| f.is_good_puzzle()).count();
+        eprintln!("Good figures: {good_figures}");
 
         res_figures.sort_by_key(|f| (f.center.y, f.center.x));
 
@@ -175,18 +235,18 @@ impl ParsedPuzzles {
     }
 
     pub fn gen_image(&self) -> ColorImage {
-        let mut res = ColorImage::new([self.width, self.height], Color32::WHITE);
+        let mut res = ColorImage::new([self.width, self.height], Color32::TRANSPARENT);
 
         let mut rng = rand::thread_rng();
         for figure in self.figures.iter() {
             let color = Color32::from_rgb(rng.gen(), rng.gen(), rng.gen());
             for p in figure.all_pts.iter() {
                 if p.x < self.width && p.y < self.height {
-                    res[(p.x, p.y)] = color;
+                    // res[(p.x, p.y)] = color;
                 }
             }
             let border_color = if figure.good_border {
-                Color32::BLACK
+                Color32::YELLOW
             } else {
                 Color32::RED
             };
