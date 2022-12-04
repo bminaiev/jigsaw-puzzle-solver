@@ -391,4 +391,93 @@ impl Placement {
         }
         res
     }
+
+    fn get_corner_by_side(p1: Pos, p2: Pos) -> (Pos, usize) {
+        for i in 0..4 {
+            let check_p1 = DEFAULT_POS[i];
+            let check_p2 = DEFAULT_POS[(i + 1) % 4];
+            if check_p1 - check_p2 == p1 - p2 {
+                return (p1 - check_p1, i);
+            }
+        }
+        unreachable!();
+    }
+
+    fn get_all_corners(&self) -> Vec<Pos> {
+        (0..self.figures.len())
+            .map(|idx| self.get_top_left_corner_by_idx(idx))
+            .collect_vec()
+    }
+
+    pub fn get_potential_locations(&self) -> Vec<PotentialLocation> {
+        let mut potential_locations = vec![];
+        for fig in self.figures.iter() {
+            for i in 0..4 {
+                let p2 = fig.positions[i];
+                let p1 = fig.positions[(i + 1) % 4];
+                let (corner, side_id) = Self::get_corner_by_side(p1, p2);
+                potential_locations.push(PotentialLocationSide {
+                    corner,
+                    side_id,
+                    other_side: Side {
+                        fig: fig.figure_id,
+                        side: i,
+                    },
+                });
+            }
+        }
+        potential_locations.sort();
+
+        let mut existing_corners = self.get_all_corners();
+        existing_corners.sort();
+
+        let mut existing_iter = 0;
+
+        let mut i = 0;
+        let mut res = vec![];
+        while i != potential_locations.len() {
+            while existing_iter != existing_corners.len()
+                && existing_corners[existing_iter] < potential_locations[i].corner
+            {
+                existing_iter += 1;
+            }
+            if existing_iter != existing_corners.len()
+                && potential_locations[i].corner == existing_corners[existing_iter]
+            {
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j != potential_locations.len()
+                && potential_locations[j].corner == potential_locations[i].corner
+            {
+                j += 1;
+            }
+            let mut neighbors = [None; 4];
+            while i != j {
+                let pl = potential_locations[i];
+                i += 1;
+                neighbors[pl.side_id] = Some(pl.other_side);
+            }
+            res.push(PotentialLocation { neighbors });
+
+            i = j;
+        }
+        res
+    }
+
+    pub fn get_all_used_figures(&self) -> Vec<usize> {
+        self.figures.iter().map(|f| f.figure_id).collect_vec()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct PotentialLocationSide {
+    corner: Pos,
+    side_id: usize,
+    other_side: Side,
+}
+
+pub struct PotentialLocation {
+    pub neighbors: [Option<Side>; 4],
 }

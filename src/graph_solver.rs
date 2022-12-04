@@ -103,6 +103,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
     }
 
     eprintln!("All edges len: {}", twos.len());
+    twos.sort_by(|t1, t2| dist(t1.s0, t1.s1).total_cmp(&dist(t2.s0, t2.s1)));
 
     let gen_placement = |state: &SearchState| -> Placement {
         let mut placement = Placement::new();
@@ -120,7 +121,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
         };
 
-    const MAX_CNT: usize = 300;
+    const MAX_CNT: usize = 1000;
     let mut pq = vec![TopN::new(MAX_CNT); graph.n + 1];
     // pq[0].push(SearchState::new(vec![], 0.0));
 
@@ -141,6 +142,9 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
                 ))
             }
         }
+        if start_state_edges.is_empty() {
+            start_state_edges.push((twos[0].s0, twos[0].s1));
+        }
         let new_state = SearchState::new(start_state_edges, 0.0, (1, 1));
         let start_vertices = new_state.vertices.len();
         eprintln!("start vertices: {start_vertices}");
@@ -148,11 +152,10 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         start_vertices
     };
 
-    let max_v = start_vertices_num + 30;
+    let max_v = start_vertices_num + 100;
     let mut last_state = None;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
-        let mut gg = 0;
 
         let cur_pq = std::mem::replace(&mut pq[cnt_vertices], TopN::new(0));
 
@@ -162,56 +165,93 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
 
         for state in cur_pq.set.iter().rev() {
             let cur_placement = gen_placement(&state);
-            let bbox = cur_placement.get_bounding_box();
+            let cur_bb = normalize_bounding_box(cur_placement.get_bounding_box());
             if iter < 30 {
                 eprintln!(
-            "iter = {}. num vertices = {}, score = {}, av edge = {}, bbox : {:?}, gg = {gg}",
-            iter,
-            state.vertices.len(),
-            state.score,
-            state.av_edge_dist,
-            bbox
-        );
+                    "iter = {}. num vertices = {}, score = {}, av edge = {}, bbox : {:?}",
+                    iter,
+                    state.vertices.len(),
+                    state.score,
+                    state.av_edge_dist,
+                    cur_bb
+                );
             }
             iter += 1;
-            let cur_bb = normalize_bounding_box(cur_placement.get_bounding_box());
             let mut new_placement = cur_placement.clone();
-            for two in twos.iter() {
-                let alr1 = state.vertices.contains(&two.s0.fig);
-                let alr2 = state.vertices.contains(&two.s1.fig);
-                if alr1 && alr2 {
-                    continue;
+            let mut can_use_figure = vec![true; n];
+            for i in 0..n {
+                if !parsed_puzzles.figures[i].is_good_puzzle() {
+                    can_use_figure[i] = false;
                 }
-                if !alr1 && !alr2 && !state.vertices.is_empty() {
-                    continue;
-                }
-                gg += 1;
-                if let Some(new_edges) = new_placement.join_sides(two.s0, two.s1) {
-                    let mut ok = true;
-                    let mut new_state_edges = state.all_edges.clone();
-                    let max_dist_with_multiplier = MAX_DIST * MAX_DIST_MULIPLIERS[new_edges.len()];
-                    for &(s1, s2) in new_edges.iter() {
-                        let d = dist(s1, s2);
-                        if d > max_dist_with_multiplier {
-                            ok = false;
-                            break;
+            }
+            for fig in cur_placement.get_all_used_figures() {
+                can_use_figure[fig] = false;
+            }
+            for potential_location in cur_placement.get_potential_locations() {
+                let mut ok_bb_increase = true;
+                for fig in 0..n {
+                    if !can_use_figure[fig] {
+                        continue;
+                    }
+                    if !ok_bb_increase {
+                        break;
+                    }
+                    for offset in 0..4 {
+                        let mut max_dist = 0.0;
+                        let mut cnt_connections = 0;
+                        let mut example_side_pair = None;
+                        for i in 0..4 {
+                            if let Some(existing_side) = potential_location.neighbors[i] {
+                                cnt_connections += 1;
+                                let my_side = Side {
+                                    fig,
+                                    side: (i + offset) % 4,
+                                };
+                                let dist = dist(my_side, existing_side);
+                                max_dist = fmax(max_dist, dist);
+                                example_side_pair = Some((existing_side, my_side));
+                            }
                         }
-                        new_state_edges.push((s1, s2));
-                    }
+                        let max_dist_with_multiplier =
+                            MAX_DIST * MAX_DIST_MULIPLIERS[cnt_connections];
+                        if max_dist <= max_dist_with_multiplier {
+                            let (s0, s1) = example_side_pair.unwrap();
+                            if let Some(new_edges) = new_placement.join_sides(s0, s1) {
+                                let mut ok = true;
+                                let mut new_state_edges = state.all_edges.clone();
+                                let max_dist_with_multiplier =
+                                    MAX_DIST * MAX_DIST_MULIPLIERS[new_edges.len()];
+                                for &(s1, s2) in new_edges.iter() {
+                                    let d = dist(s1, s2);
+                                    if d > max_dist_with_multiplier {
+                                        ok = false;
+                                        break;
+                                    }
+                                    new_state_edges.push((s1, s2));
+                                }
+                                assert!(ok);
 
-                    let new_bounding_box = normalize_bounding_box(new_placement.get_bounding_box());
-                    if is_bad_bounding_box(new_bounding_box) {
-                        ok = false;
-                    }
-                    if new_bounding_box != cur_bb && !ok_to_increase_bb(cur_bb, cnt_vertices) {
-                        ok = false;
-                    }
+                                let new_bounding_box =
+                                    normalize_bounding_box(new_placement.get_bounding_box());
+                                if is_bad_bounding_box(new_bounding_box) {
+                                    ok = false;
+                                }
+                                if new_bounding_box != cur_bb
+                                    && !ok_to_increase_bb(cur_bb, cnt_vertices)
+                                {
+                                    ok = false;
+                                }
 
-                    if ok {
-                        let new_state = gen_state(new_state_edges, &new_placement);
-                        pq[new_state.vertices.len()].insert(new_state);
+                                if ok {
+                                    let new_state = gen_state(new_state_edges, &new_placement);
+                                    pq[new_state.vertices.len()].insert(new_state);
+                                } else {
+                                    ok_bb_increase = false;
+                                }
+                                new_placement = cur_placement.clone();
+                            }
+                        }
                     }
-                    new_placement = cur_placement.clone();
                 }
             }
         }

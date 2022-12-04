@@ -39,7 +39,7 @@ const BEFORE_CROP_PATH: &str = "img/prod2/4.jpg";
 const PATH: &str = "img/prod2/crop_join.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
-const LOAD_EXISTING_SOLUTION: bool = false;
+const LOAD_EXISTING_SOLUTION: bool = true;
 
 const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 460;
 
