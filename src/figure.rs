@@ -327,7 +327,7 @@ impl Figure {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BorderFigure {
     pub figure_id: usize,
     pub left_side: Side,

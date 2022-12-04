@@ -6,11 +6,17 @@ use std::{
 };
 
 use itertools::Itertools;
+use ndarray::Array4;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use crate::{
-    border_matcher::is_picture_border, borders_graph::Graph, figure::BorderFigure,
-    parsed_puzzles::ParsedPuzzles, placement::Placement, topn::TopN, utils::Side,
+    border_matcher::is_picture_border,
+    borders_graph::Graph,
+    figure::BorderFigure,
+    parsed_puzzles::ParsedPuzzles,
+    placement::Placement,
+    topn::TopN,
+    utils::{fmax, fmin, Side},
 };
 
 #[derive(Clone, Debug)]
@@ -82,7 +88,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
 
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
-    const MAX_DIST: f64 = 1.0;
+    const MAX_DIST: f64 = 2.0;
     const MAX_DIST_MULIPLIERS: [f64; 5] = [0.0, 1.0, 1.1, 1.3, 2.0];
 
     let mut twos = vec![];
@@ -114,7 +120,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
         };
 
-    const MAX_CNT: usize = 30;
+    const MAX_CNT: usize = 300;
     let mut pq = vec![TopN::new(MAX_CNT); graph.n + 1];
     // pq[0].push(SearchState::new(vec![], 0.0));
 
@@ -142,7 +148,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         start_vertices
     };
 
-    let max_v = start_vertices_num + 50;
+    let max_v = start_vertices_num + 30;
     let mut last_state = None;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
@@ -168,6 +174,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         );
             }
             iter += 1;
+            let cur_bb = normalize_bounding_box(cur_placement.get_bounding_box());
             let mut new_placement = cur_placement.clone();
             for two in twos.iter() {
                 let alr1 = state.vertices.contains(&two.s0.fig);
@@ -192,6 +199,14 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
                         new_state_edges.push((s1, s2));
                     }
 
+                    let new_bounding_box = normalize_bounding_box(new_placement.get_bounding_box());
+                    if is_bad_bounding_box(new_bounding_box) {
+                        ok = false;
+                    }
+                    if new_bounding_box != cur_bb && !ok_to_increase_bb(cur_bb, cnt_vertices) {
+                        ok = false;
+                    }
+
                     if ok {
                         let new_state = gen_state(new_state_edges, &new_placement);
                         pq[new_state.vertices.len()].insert(new_state);
@@ -205,6 +220,20 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
     let placement = gen_placement(&last_state.unwrap());
     graph.get_subgraph(&placement)
     //
+}
+
+fn normalize_bounding_box((x, y): (i32, i32)) -> (i32, i32) {
+    (min(x, y), max(x, y))
+}
+
+fn is_bad_bounding_box((min, max): (i32, i32)) -> bool {
+    min * 3 < max
+}
+
+fn ok_to_increase_bb((x, y): (i32, i32), cnt: usize) -> bool {
+    let area = (x * y) as usize;
+    let ok_from = area - area / 10;
+    cnt >= ok_from
 }
 
 pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
@@ -222,6 +251,97 @@ pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Grap
 
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
+    let mut sorted_by_dist = vec![vec![vec![]; 4]; n];
+    for fig in 0..n {
+        if !parsed_puzzles.figures[fig].is_good_puzzle() {
+            continue;
+        }
+        for side in 0..4 {
+            for fig2 in 0..n {
+                if fig2 == fig || !parsed_puzzles.figures[fig2].is_good_puzzle() {
+                    continue;
+                }
+                for side2 in 0..4 {
+                    sorted_by_dist[fig][side].push(Side {
+                        fig: fig2,
+                        side: side2,
+                    });
+                }
+            }
+            let my_side = Side { fig, side };
+            sorted_by_dist[fig][side]
+                .sort_by(|s1, s2| dist(my_side, *s1).total_cmp(&dist(my_side, *s2)));
+        }
+    }
+
+    const MAX_DIST: f64 = 3.5;
+
+    let mut dist2 = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 50.0);
+    for (iter, left_fig) in figures_on_border.iter().enumerate() {
+        eprintln!("dist2 iter: {iter}/{}", figures_on_border.len());
+        for right_fig in figures_on_border.iter() {
+            if left_fig.figure_id == right_fig.figure_id {
+                continue;
+            }
+            let s1 = left_fig.right_side;
+            let s1_up = s1.pr();
+            let s2 = right_fig.left_side;
+            let s2_up = s2.ne();
+            let mut cur_res = f64::MAX;
+
+            let start_dist = dist(s1, s2);
+
+            if start_dist > MAX_DIST {
+                continue;
+            }
+
+            let list1 = &sorted_by_dist[s1.fig][s1_up.side];
+            let list2 = &sorted_by_dist[s2.fig][s2_up.side];
+            for sum_ix in 0..list1.len() + list2.len() - 1 {
+                {
+                    let ix1 = sum_ix / 2;
+                    let ix2 = sum_ix - ix1;
+                    let s3 = list1[ix1];
+                    let s4 = list2[ix2];
+                    if dist(s1_up, s3) > cur_res && dist(s2_up, s4) > cur_res {
+                        // eprintln!(
+                        //     "Break at idx: {sum_ix}. Dists: {} {}",
+                        //     dist(s1_up, s3),
+                        //     dist(s2_up, s4)
+                        // );
+                        break;
+                    }
+                }
+                for ix1 in 0..min(sum_ix + 1, list1.len()) {
+                    let ix2 = sum_ix - ix1;
+                    if ix2 < list2.len() {
+                        let s3 = list1[ix1];
+                        let s4 = list2[ix2];
+                        let d1_up = dist(s1_up, s3);
+                        let d2_up = dist(s2_up, s4);
+                        if d1_up > cur_res || d2_up > cur_res {
+                            continue;
+                        }
+                        let check_res = fmax(start_dist, dist(s3.pr(), s4.ne()));
+                        let check_res = fmax(fmax(d1_up, d2_up), check_res);
+                        cur_res = fmin(cur_res, check_res);
+                    }
+                }
+            }
+
+            // if start_dist < 2.0 {
+            //     eprintln!(
+            //         "Calculated dist2: {:?}..{:?}: {start_dist} -> {cur_res}",
+            //         left_fig, right_fig
+            //     );
+            // }
+            dist2[[s1.fig, s1.side, s2.fig, s2.side]] = cur_res;
+            dist2[[s2.fig, s2.side, s1.fig, s1.side]] = cur_res;
+        }
+    }
+
+    let dist2 = |s1: Side, s2: Side| -> f64 { dist2[[s1.fig, s1.side, s2.fig, s2.side]] };
+
     let mut rnd = StdRng::seed_from_u64(123);
 
     let segm_cost = |border: &[BorderFigure],
@@ -234,8 +354,8 @@ pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Grap
         i2 %= sz;
         i3 %= sz;
         i4 %= sz;
-        dist(border[i1].right_side, border[i2].left_side)
-            + dist(border[i3].right_side, border[i4].left_side)
+        dist2(border[i1].right_side, border[i2].left_side)
+            + dist2(border[i3].right_side, border[i4].left_side)
     };
 
     for iter in 0..100_000_000 {
@@ -293,8 +413,6 @@ pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Grap
             figures_on_border = next_order;
         }
     }
-
-    const MAX_DIST: f64 = 4.5;
 
     let gen_placement = |order: &[BorderFigure]| -> Placement {
         let mut placement = Placement::new();

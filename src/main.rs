@@ -68,7 +68,7 @@ fn main_ui(
 fn main_build_graph() {
     let color_image = load_image_from_path(PATH).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
-    let graph = Graph::new(&parsed_puzzles, true);
+    let graph = Graph::new(&parsed_puzzles, false);
     fs::write(GRAPH_PATH, serde_json::to_string(&graph).unwrap()).unwrap();
 }
 
@@ -80,7 +80,7 @@ fn main_load_graph() {
     let solution_graph = if LOAD_EXISTING_SOLUTION {
         serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap()
     } else {
-        let res = solve_graph_border(&graph, &parsed_puzzles);
+        let res = solve_graph(&graph, &parsed_puzzles);
         fs::write(GRAPH_SOLUTION_PATH, serde_json::to_string(&res).unwrap()).unwrap();
         res
     };
