@@ -59,9 +59,24 @@ impl Graph {
         }
     }
 
-    pub fn new(parsed_puzzles: &ParsedPuzzles) -> Self {
+    pub fn new(parsed_puzzles: &ParsedPuzzles, only_borders: bool) -> Self {
         let mut all_edges = vec![];
         let figures = &parsed_puzzles.figures;
+
+        let mut ok_sides = BTreeSet::new();
+        if only_borders {
+            let figures = parsed_puzzles.calc_figures_on_border();
+            for fig in figures.iter() {
+                ok_sides.insert(fig.left_side);
+                ok_sides.insert(fig.right_side);
+            }
+        } else {
+            for fig in 0..figures.len() {
+                for side in 0..4 {
+                    ok_sides.insert(Side { fig, side });
+                }
+            }
+        }
 
         for fig1 in 0..figures.len() {
             eprintln!("{}/{}", fig1, figures.len());
@@ -71,6 +86,17 @@ impl Graph {
                 }
                 for side1 in 0..4 {
                     for side2 in 0..4 {
+                        let s1 = Side {
+                            fig: fig1,
+                            side: side1,
+                        };
+                        let s2 = Side {
+                            fig: fig2,
+                            side: side2,
+                        };
+                        if !ok_sides.contains(&s1) || !ok_sides.contains(&s2) {
+                            continue;
+                        }
                         let existing_edge = match_borders_without_move(
                             &figures[fig1],
                             side1,

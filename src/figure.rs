@@ -6,7 +6,7 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::point::Point;
+use crate::{point::Point, utils::Side};
 
 #[derive(Clone, Hash)]
 pub struct Figure {
@@ -324,5 +324,28 @@ impl Figure {
     pub fn get_cs_points(&self) -> (Point, Point) {
         let n = self.border.len() / 2;
         (self.border[0], self.border[n])
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct BorderFigure {
+    pub figure_id: usize,
+    pub left_side: Side,
+    pub right_side: Side,
+}
+
+impl BorderFigure {
+    pub fn new(figure_id: usize, left_side: usize, right_side: usize) -> Self {
+        Self {
+            figure_id,
+            left_side: Side {
+                fig: figure_id,
+                side: (left_side % 4),
+            },
+            right_side: Side {
+                fig: figure_id,
+                side: (right_side % 4),
+            },
+        }
     }
 }

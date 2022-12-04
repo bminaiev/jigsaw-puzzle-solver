@@ -9,8 +9,8 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use crate::{
-    border_matcher::is_picture_border, borders_graph::Graph, parsed_puzzles::ParsedPuzzles,
-    placement::Placement, topn::TopN, utils::Side,
+    border_matcher::is_picture_border, borders_graph::Graph, figure::BorderFigure,
+    parsed_puzzles::ParsedPuzzles, placement::Placement, topn::TopN, utils::Side,
 };
 
 #[derive(Clone, Debug)]
@@ -207,29 +207,6 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
     //
 }
 
-#[derive(Clone, Copy)]
-struct BorderFigure {
-    figure_id: usize,
-    left_side: Side,
-    right_side: Side,
-}
-
-impl BorderFigure {
-    pub fn new(figure_id: usize, left_side: usize, right_side: usize) -> Self {
-        Self {
-            figure_id,
-            left_side: Side {
-                fig: figure_id,
-                side: (left_side % 4),
-            },
-            right_side: Side {
-                fig: figure_id,
-                side: (right_side % 4),
-            },
-        }
-    }
-}
-
 pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
@@ -238,28 +215,7 @@ pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Grap
     let dist = graph.gen_adj_matrix();
     eprintln!("nd array created!");
 
-    let mut figures_on_border = (0..n)
-        .filter_map(|id| {
-            let figure = &parsed_puzzles.figures[id];
-            if !figure.is_good_puzzle() {
-                return None;
-            }
-            let is_border = (0..4)
-                .map(|border_id| is_picture_border(figure, border_id))
-                .collect_vec();
-            for i in 0..4 {
-                if is_border[i] && is_border[(i + 1) % 4] {
-                    return Some(BorderFigure::new(id, i + 2, i + 3));
-                }
-            }
-            for i in 0..4 {
-                if is_border[i] {
-                    return Some(BorderFigure::new(id, i + 1, i + 3));
-                }
-            }
-            None
-        })
-        .collect_vec();
+    let mut figures_on_border = parsed_puzzles.calc_figures_on_border();
 
     let sz = figures_on_border.len();
     eprintln!("Number of figures on border: {}", sz);
@@ -338,7 +294,7 @@ pub fn solve_graph_border(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Grap
         }
     }
 
-    const MAX_DIST: f64 = 1.5;
+    const MAX_DIST: f64 = 4.5;
 
     let gen_placement = |order: &[BorderFigure]| -> Placement {
         let mut placement = Placement::new();

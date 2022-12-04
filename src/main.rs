@@ -68,7 +68,7 @@ fn main_ui(
 fn main_build_graph() {
     let color_image = load_image_from_path(PATH).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
-    let graph = Graph::new(&parsed_puzzles);
+    let graph = Graph::new(&parsed_puzzles, true);
     fs::write(GRAPH_PATH, serde_json::to_string(&graph).unwrap()).unwrap();
 }
 

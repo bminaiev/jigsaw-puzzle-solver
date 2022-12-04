@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     collections::{BTreeMap, BTreeSet, VecDeque},
     f64::consts::PI,
 };
@@ -8,7 +9,8 @@ use itertools::Itertools;
 
 use crate::{
     border_matcher::{
-        local_optimize_coordinate_systems, match_borders, match_placed_borders, MatchResult,
+        local_optimize_coordinate_systems, match_borders, match_placed_borders, BorderAndNeighbors,
+        MatchResult,
     },
     borders_graph::Graph,
     coordinate_system::CoordinateSystem,
@@ -92,6 +94,27 @@ fn get_border(pos: &[PointF], parsed_puzzles: &ParsedPuzzles, side: Side) -> Vec
     res
 }
 
+fn get_border_and_neighbors(
+    pos: &[PointF],
+    parsed_puzzles: &ParsedPuzzles,
+    side: Side,
+) -> BorderAndNeighbors {
+    let mut prev = get_border(pos, parsed_puzzles, side.pr());
+    {
+        let sz = min(BorderAndNeighbors::NEIGHBORS, prev.len());
+        prev.rotate_right(sz);
+        prev.truncate(sz);
+    }
+    let mut next = get_border(pos, parsed_puzzles, side.ne());
+    next.truncate(BorderAndNeighbors::NEIGHBORS);
+
+    BorderAndNeighbors {
+        border: get_border(pos, parsed_puzzles, side),
+        prev,
+        next,
+    }
+}
+
 fn get_borders_dist(
     pos1: &[PointF],
     pos2: &[PointF],
@@ -99,9 +122,9 @@ fn get_borders_dist(
     s1: Side,
     s2: Side,
 ) -> f64 {
-    let border1 = get_border(pos1, parsed_puzzles, s1);
-    let mut border2 = get_border(pos2, parsed_puzzles, s2);
-    border2.reverse();
+    let border1 = get_border_and_neighbors(pos1, parsed_puzzles, s1);
+    let border2 = get_border_and_neighbors(pos2, parsed_puzzles, s2);
+    let border2 = border2.reverse();
     match_placed_borders(&border1, &border2)
 }
 

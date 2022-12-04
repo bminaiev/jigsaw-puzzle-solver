@@ -1,17 +1,36 @@
 use std::cmp::min;
 
-use eframe::epaint::{vec2, Vec2};
 use itertools::Itertools;
 
 use crate::{
     coordinate_system::CoordinateSystem,
     figure::Figure,
     point::{find_center, PointF},
-    utils::fmax,
+    utils::{fmax, fmin},
 };
 
+pub struct BorderAndNeighbors {
+    pub border: Vec<PointF>,
+    pub prev: Vec<PointF>,
+    pub next: Vec<PointF>,
+}
+
+impl BorderAndNeighbors {
+    pub const NEIGHBORS: usize = 5;
+
+    pub fn reverse(&self) -> Self {
+        let mut border = self.border.clone();
+        border.reverse();
+        let mut prev = self.next.clone();
+        prev.reverse();
+        let mut next = self.prev.clone();
+        next.reverse();
+        Self { border, prev, next }
+    }
+}
+
 // smaller -> better
-pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
+pub fn match_placed_borders_center(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     // TODO: smarter logic
 
     const CHECK_NEXT: usize = 5;
@@ -36,6 +55,54 @@ pub fn match_placed_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     };
 
     score_one_side(lhs, rhs) + score_one_side(rhs, lhs)
+}
+
+#[derive(Clone, Copy)]
+struct Line {
+    a: f64,
+    b: f64,
+    c: f64,
+}
+
+impl Line {
+    pub fn new(p1: &PointF, p2: &PointF) -> Self {
+        let a = p2.y - p1.y;
+        let b = p1.x - p2.x;
+        let c = -(p1.x * a + p1.y * b);
+        Self { a, b, c }
+    }
+
+    fn dist(&self, p: PointF) -> f64 {
+        (self.a * p.x + self.b * p.y + self.c).abs() / (self.a * self.a + self.b * self.b).sqrt()
+    }
+}
+
+fn match_side_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
+    let mut res = f64::MAX / 100.0;
+    for p1 in lhs.iter() {
+        for p2 in rhs.iter() {
+            if p1 != p2 {
+                let line = Line::new(p1, p2);
+                let mut sum_dist = 0.0;
+                for &np in lhs.iter() {
+                    sum_dist += line.dist(np);
+                }
+                for &np in rhs.iter() {
+                    sum_dist += line.dist(np);
+                }
+                res = fmin(res, sum_dist);
+            }
+        }
+    }
+    let cnt = (lhs.len() + rhs.len()) as f64;
+    res / cnt
+}
+
+pub fn match_placed_borders(lhs: &BorderAndNeighbors, rhs: &BorderAndNeighbors) -> f64 {
+    let center = match_placed_borders_center(&lhs.border, &rhs.border);
+    let prev = match_side_borders(&lhs.prev, &rhs.prev);
+    let next = match_side_borders(&lhs.next, &rhs.next);
+    center + (prev + next) * 2.0
 }
 
 #[derive(Clone)]
@@ -215,6 +282,23 @@ pub fn is_picture_border(figure: &Figure, border_id: usize) -> bool {
     is_picture_border_impl(&pts)
 }
 
+fn get_figure_border_and_neighbors(figure: &Figure, border_id: usize) -> BorderAndNeighbors {
+    let mut prev = get_figure_border(figure, (border_id + 3) % 4);
+    {
+        let sz = min(BorderAndNeighbors::NEIGHBORS, prev.len());
+        prev.rotate_right(sz);
+        prev.truncate(sz);
+    }
+    let mut next = get_figure_border(figure, (border_id + 1) % 4);
+    next.truncate(BorderAndNeighbors::NEIGHBORS);
+
+    BorderAndNeighbors {
+        border: get_figure_border(figure, border_id),
+        prev,
+        next,
+    }
+}
+
 // TODO: use `Side` type
 pub fn match_borders(
     lhs_figure: &Figure,
@@ -224,22 +308,29 @@ pub fn match_borders(
     lhs_id: usize,
     rhs_id: usize,
 ) -> Option<MatchResult> {
-    let lhs = get_figure_border(&lhs_figure, lhs_border_id);
-    let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
-    rhs.reverse();
+    let lhs = get_figure_border_and_neighbors(&lhs_figure, lhs_border_id);
+    let rhs = get_figure_border_and_neighbors(&rhs_figure, rhs_border_id);
+    let rhs = rhs.reverse();
 
-    if is_picture_border_impl(&lhs) || is_picture_border_impl(&rhs) {
+    if is_picture_border_impl(&lhs.border) || is_picture_border_impl(&rhs.border) {
         return None;
     }
 
-    let to_cs = estimate_coordinate_system_by_border(&lhs)?;
-    let from_cs_estimation = estimate_coordinate_system_by_border(&rhs)?;
+    let to_cs = estimate_coordinate_system_by_border(&lhs.border)?;
+    let from_cs_estimation = estimate_coordinate_system_by_border(&rhs.border)?;
 
     let conv_point =
         |from_cs: &CoordinateSystem, p: PointF| -> PointF { to_cs.to_real(from_cs.create(p)) };
 
-    let move_rhs = |from_cs: &CoordinateSystem| -> Vec<PointF> {
-        rhs.iter().map(|p| conv_point(from_cs, *p)).collect_vec()
+    let move_rhs = |from_cs: &CoordinateSystem| -> BorderAndNeighbors {
+        let conv_v = |v: &[PointF]| -> Vec<PointF> {
+            v.iter().map(|p| conv_point(from_cs, *p)).collect_vec()
+        };
+        BorderAndNeighbors {
+            border: conv_v(&rhs.border),
+            prev: conv_v(&rhs.prev),
+            next: conv_v(&rhs.next),
+        }
     };
 
     let from_cs = if match_placed_borders(&lhs, &move_rhs(&from_cs_estimation)) > 100.0 {
@@ -273,9 +364,9 @@ pub fn match_borders_without_move(
     lhs_id: usize,
     rhs_id: usize,
 ) -> Option<MatchResult> {
-    let lhs = get_figure_border(&lhs_figure, lhs_border_id);
-    let mut rhs = get_figure_border(&rhs_figure, rhs_border_id);
-    rhs.reverse();
+    let lhs = get_figure_border_and_neighbors(&lhs_figure, lhs_border_id);
+    let mut rhs = get_figure_border_and_neighbors(&rhs_figure, rhs_border_id);
+    let rhs = rhs.reverse();
 
     let score = match_placed_borders(&lhs, &rhs);
 

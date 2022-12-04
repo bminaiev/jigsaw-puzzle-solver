@@ -12,8 +12,9 @@ use rand::Rng;
 
 use crate::{
     average_color::{self, AverareColor},
+    border_matcher::is_picture_border,
     dsu::Dsu,
-    figure::Figure,
+    figure::{BorderFigure, Figure},
     point::Point,
     utils::save_color_image,
     PUZZLE_PIXEL_WHITE_THRESHOLD,
@@ -246,7 +247,7 @@ impl ParsedPuzzles {
                 }
             }
             let border_color = if figure.good_border {
-                Color32::YELLOW
+                Color32::BLUE
             } else {
                 Color32::RED
             };
@@ -265,5 +266,30 @@ impl ParsedPuzzles {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         hasher.finish()
+    }
+
+    pub fn calc_figures_on_border(&self) -> Vec<BorderFigure> {
+        (0..self.figures.len())
+            .filter_map(|id| {
+                let figure = &self.figures[id];
+                if !figure.is_good_puzzle() {
+                    return None;
+                }
+                let is_border = (0..4)
+                    .map(|border_id| is_picture_border(figure, border_id))
+                    .collect_vec();
+                for i in 0..4 {
+                    if is_border[i] && is_border[(i + 1) % 4] {
+                        return Some(BorderFigure::new(id, i + 2, i + 3));
+                    }
+                }
+                for i in 0..4 {
+                    if is_border[i] {
+                        return Some(BorderFigure::new(id, i + 1, i + 3));
+                    }
+                }
+                None
+            })
+            .collect_vec()
     }
 }
