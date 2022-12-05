@@ -43,9 +43,6 @@ impl SearchState {
             vertices.insert(s1.fig);
             vertices.insert(s2.fig);
         }
-        let max_bb_edge = max(bb.0, bb.1) as f64;
-        let min_bb_edge = min(bb.0, bb.1) as f64;
-        let bb_coef = min_bb_edge + 2.0 * max_bb_edge;
         let score = (all_edges.len() as f64) / (max(1, vertices.len()) as f64);
         Self {
             all_edges,
@@ -73,7 +70,86 @@ impl Ord for SearchState {
     }
 }
 
-pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
+fn optimize_start_position(
+    mut placement: Placement,
+    n: usize,
+    mut dist: impl FnMut(Side, Side) -> f64,
+) -> Placement {
+    let mut used = vec![false; n];
+    for v in placement.get_all_used_figures() {
+        used[v] = true;
+    }
+    loop {
+        let mut changed = false;
+        eprintln!("New loop!");
+        for potential_location in placement.get_potential_locations(true) {
+            let cur_figure = placement
+                .get_figure_by_position(potential_location.pos)
+                .unwrap();
+            let mut cur_score = 0.0;
+            for i in 0..4 {
+                if let Some(another_side) = potential_location.neighbors[i] {
+                    let cur_dist = dist(another_side, cur_figure[i]);
+                    cur_score = fmax(cur_score, cur_dist);
+                }
+            }
+            for fig in 0..n {
+                if changed {
+                    break;
+                }
+                if !used[fig] {
+                    for offset in 0..4 {
+                        let mut max_dist = 0.0;
+                        let mut example_side_pair = None;
+                        for i in 0..4 {
+                            if let Some(existing_side) = potential_location.neighbors[i] {
+                                let my_side = Side {
+                                    fig,
+                                    side: (i + offset) % 4,
+                                };
+                                let dist = dist(my_side, existing_side);
+                                max_dist = fmax(max_dist, dist);
+                                example_side_pair = Some((existing_side, my_side));
+                            }
+                        }
+                        if max_dist < cur_score {
+                            let old_figure = cur_figure[0].fig;
+                            eprintln!(
+                                "Replaced {old_figure} with {fig}: {cur_score} -> {max_dist}.Location = {:?}", potential_location.pos
+                            );
+                            changed = true;
+                            placement.remove_figure(cur_figure[0].fig);
+                            let (s1, s2) = example_side_pair.unwrap();
+                            used[s2.fig] = true;
+                            used[cur_figure[0].fig] = false;
+                            if let Some(new_edges) = placement.join_sides(s1, s2) {
+                                for &(s1, s2) in new_edges.iter() {
+                                    eprintln!("New edge: {}", dist(s1, s2));
+                                }
+                            } else {
+                                unreachable!();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            if changed {
+                break;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    placement
+}
+
+pub fn solve_graph(
+    graph: &Graph,
+    parsed_puzzles: &ParsedPuzzles,
+    prev_state: Option<Graph>,
+) -> Graph {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
     eprintln!("Hello there!");
@@ -113,23 +189,23 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
         placement
     };
 
-    let gen_state =
-        |new_state_edges: Vec<(Side, Side)>, new_placement: &Placement| -> SearchState {
-            let sum_dists: f64 = new_state_edges.iter().map(|&(s1, s2)| dist(s1, s2)).sum();
-            let bb = new_placement.get_bounding_box();
-            let cnt_edges = new_state_edges.len();
-            SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
-        };
+    let gen_state = |new_placement: &Placement| -> SearchState {
+        let new_state_edges = new_placement.get_all_neighbours();
+        let sum_dists: f64 = new_state_edges.iter().map(|&(s1, s2)| dist(s1, s2)).sum();
+        let bb = new_placement.get_bounding_box();
+        let cnt_edges = new_state_edges.len();
+        SearchState::new(new_state_edges, sum_dists / (cnt_edges as f64), bb)
+    };
 
-    const MAX_CNT: usize = 1000;
+    const MAX_CNT: usize = 10000;
     let mut pq = vec![TopN::new(MAX_CNT); graph.n + 1];
     // pq[0].push(SearchState::new(vec![], 0.0));
 
     let start_vertices_num = {
         let mut start_state_edges = vec![];
-        for e in graph.all_edges.iter() {
-            if e.existing_edge {
-                eprintln!("WANT TO USE EDGE: {:?}", e);
+        if let Some(prev_state) = prev_state {
+            for e in prev_state.all_edges.iter() {
+                eprintln!("WANT TO USE EDGE FROM PREV SOL: {:?}", e);
                 start_state_edges.push((
                     Side {
                         fig: e.fig1,
@@ -141,18 +217,36 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
                     },
                 ))
             }
+        } else {
+            for e in graph.all_edges.iter() {
+                if e.existing_edge {
+                    eprintln!("WANT TO USE EDGE: {:?}", e);
+                    start_state_edges.push((
+                        Side {
+                            fig: e.fig1,
+                            side: e.side1,
+                        },
+                        Side {
+                            fig: e.fig2,
+                            side: e.side2,
+                        },
+                    ))
+                }
+            }
         }
         if start_state_edges.is_empty() {
             start_state_edges.push((twos[0].s0, twos[0].s1));
         }
         let new_state = SearchState::new(start_state_edges, 0.0, (1, 1));
+        let placement = gen_placement(&new_state);
+        let new_state = gen_state(&optimize_start_position(placement, n, dist));
         let start_vertices = new_state.vertices.len();
         eprintln!("start vertices: {start_vertices}");
         pq[start_vertices].insert(new_state);
         start_vertices
     };
 
-    let max_v = start_vertices_num + 100;
+    let max_v = start_vertices_num + 20;
     let mut last_state = None;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
@@ -187,7 +281,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
             for fig in cur_placement.get_all_used_figures() {
                 can_use_figure[fig] = false;
             }
-            for potential_location in cur_placement.get_potential_locations() {
+            for potential_location in cur_placement.get_potential_locations(false) {
                 let mut ok_bb_increase = true;
                 for fig in 0..n {
                     if !can_use_figure[fig] {
@@ -216,23 +310,10 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
                             MAX_DIST * MAX_DIST_MULIPLIERS[cnt_connections];
                         if max_dist <= max_dist_with_multiplier {
                             let (s0, s1) = example_side_pair.unwrap();
-                            if let Some(new_edges) = new_placement.join_sides(s0, s1) {
-                                let mut ok = true;
-                                let mut new_state_edges = state.all_edges.clone();
-                                let max_dist_with_multiplier =
-                                    MAX_DIST * MAX_DIST_MULIPLIERS[new_edges.len()];
-                                for &(s1, s2) in new_edges.iter() {
-                                    let d = dist(s1, s2);
-                                    if d > max_dist_with_multiplier {
-                                        ok = false;
-                                        break;
-                                    }
-                                    new_state_edges.push((s1, s2));
-                                }
-                                assert!(ok);
-
+                            if let Some(_new_edges) = new_placement.join_sides(s0, s1) {
                                 let new_bounding_box =
                                     normalize_bounding_box(new_placement.get_bounding_box());
+                                let mut ok = true;
                                 if is_bad_bounding_box(new_bounding_box) {
                                     ok = false;
                                 }
@@ -243,7 +324,7 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
                                 }
 
                                 if ok {
-                                    let new_state = gen_state(new_state_edges, &new_placement);
+                                    let new_state = gen_state(&new_placement);
                                     pq[new_state.vertices.len()].insert(new_state);
                                 } else {
                                     ok_bb_increase = false;
@@ -259,7 +340,6 @@ pub fn solve_graph(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Graph {
 
     let placement = gen_placement(&last_state.unwrap());
     graph.get_subgraph(&placement)
-    //
 }
 
 fn normalize_bounding_box((x, y): (i32, i32)) -> (i32, i32) {

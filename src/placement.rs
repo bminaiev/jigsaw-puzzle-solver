@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::{borders_graph::Graph, utils::Side};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Pos {
     x: i32,
     y: i32,
@@ -159,6 +159,10 @@ impl Placement {
             if f.comp_id == comp1 {
                 let corner = self.get_top_left_corner_by_idx(idx);
                 if corner == search_corner {
+                    eprintln!(
+                        "Already exist thing in {:?}, figure_id = {}",
+                        corner, f.figure_id
+                    );
                     return false;
                 }
             }
@@ -274,10 +278,11 @@ impl Placement {
         if self.get_fig_index(fig_id).is_some() {
             return;
         }
+        let max_comp_id = self.figures.iter().map(|f| f.comp_id).max().unwrap_or(0);
         self.figures.push(FigureInfo {
             figure_id: fig_id,
             positions: DEFAULT_POS.clone(),
-            comp_id: self.figures.len(),
+            comp_id: max_comp_id + 1,
         });
         self.figures.sort_by_key(|f| f.figure_id);
     }
@@ -409,7 +414,7 @@ impl Placement {
             .collect_vec()
     }
 
-    pub fn get_potential_locations(&self) -> Vec<PotentialLocation> {
+    pub fn get_potential_locations(&self, only_existing_locations: bool) -> Vec<PotentialLocation> {
         let mut potential_locations = vec![];
         for fig in self.figures.iter() {
             for i in 0..4 {
@@ -441,12 +446,7 @@ impl Placement {
             {
                 existing_iter += 1;
             }
-            if existing_iter != existing_corners.len()
-                && potential_locations[i].corner == existing_corners[existing_iter]
-            {
-                i += 1;
-                continue;
-            }
+
             let mut j = i;
             while j != potential_locations.len()
                 && potential_locations[j].corner == potential_locations[i].corner
@@ -459,15 +459,52 @@ impl Placement {
                 i += 1;
                 neighbors[pl.side_id] = Some(pl.other_side);
             }
-            res.push(PotentialLocation { neighbors });
+            let existing_location = existing_iter != existing_corners.len()
+                && potential_locations[i - 1].corner == existing_corners[existing_iter];
+            if existing_location == only_existing_locations {
+                res.push(PotentialLocation {
+                    neighbors,
+                    pos: potential_locations[i - 1].corner,
+                });
+            }
 
             i = j;
         }
         res
     }
 
+    pub fn get_figure_by_position(&self, top_left: Pos) -> Option<[Side; 4]> {
+        for (idx, fig) in self.figures.iter().enumerate() {
+            if self.get_top_left_corner_by_idx(idx) == top_left {
+                let offset = fig
+                    .positions
+                    .iter()
+                    .position(|pos| *pos == top_left)
+                    .unwrap();
+                let mut res = [Side::default(); 4];
+                for i in 0..4 {
+                    res[i] = Side {
+                        fig: fig.figure_id,
+                        side: (offset + i) % 4,
+                    };
+                }
+                return Some(res);
+            }
+        }
+        None
+    }
+
     pub fn get_all_used_figures(&self) -> Vec<usize> {
         self.figures.iter().map(|f| f.figure_id).collect_vec()
+    }
+
+    pub fn remove_figure(&mut self, figure: usize) {
+        for i in 0..self.figures.len() {
+            if self.figures[i].figure_id == figure {
+                self.figures.remove(i);
+                return;
+            }
+        }
     }
 }
 
@@ -480,4 +517,5 @@ struct PotentialLocationSide {
 
 pub struct PotentialLocation {
     pub neighbors: [Option<Side>; 4],
+    pub pos: Pos,
 }

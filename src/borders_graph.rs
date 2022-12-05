@@ -37,7 +37,7 @@ impl Edge {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Graph {
     pub n: usize,
     pub all_edges: Vec<Edge>,
@@ -152,5 +152,14 @@ impl Graph {
             dist[[edge.fig2, edge.side2, edge.fig1, edge.side1]] = edge.score;
         }
         dist
+    }
+
+    pub(crate) fn num_vertices(&self) -> usize {
+        let mut seen = BTreeSet::new();
+        for e in self.all_edges.iter() {
+            seen.insert(e.fig1);
+            seen.insert(e.fig2);
+        }
+        seen.len()
     }
 }

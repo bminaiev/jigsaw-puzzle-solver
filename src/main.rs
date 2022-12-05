@@ -39,7 +39,7 @@ const BEFORE_CROP_PATH: &str = "img/prod2/4.jpg";
 const PATH: &str = "img/prod2/crop_join.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
-const LOAD_EXISTING_SOLUTION: bool = true;
+const LOAD_EXISTING_SOLUTION: bool = false;
 
 const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 460;
 
@@ -77,13 +77,37 @@ fn main_load_graph() {
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
-    let solution_graph = if LOAD_EXISTING_SOLUTION {
-        serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap()
-    } else {
-        let res = solve_graph(&graph, &parsed_puzzles);
-        fs::write(GRAPH_SOLUTION_PATH, serde_json::to_string(&res).unwrap()).unwrap();
-        res
+
+    let solution_graph = {
+        let mut prev_state: Option<Graph> = if LOAD_EXISTING_SOLUTION {
+            Some(serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap())
+        } else {
+            None
+        };
+        let at_most_vertices = prev_state.as_ref().map(|x| x.num_vertices()).unwrap_or(0) + 1000;
+        loop {
+            let last_sz = prev_state.as_ref().map(|x| x.num_vertices()).unwrap_or(0);
+            let res = solve_graph(&graph, &parsed_puzzles, prev_state.clone());
+            let new_vertices = res.num_vertices();
+            prev_state = Some(res);
+            if new_vertices > last_sz && new_vertices < at_most_vertices {
+                eprintln!("Need at least one more iteration...");
+                fs::write(
+                    GRAPH_SOLUTION_PATH,
+                    serde_json::to_string(prev_state.as_ref().unwrap()).unwrap(),
+                )
+                .unwrap();
+            } else {
+                break;
+            }
+        }
+        prev_state.unwrap()
     };
+    fs::write(
+        GRAPH_SOLUTION_PATH,
+        serde_json::to_string(&solution_graph).unwrap(),
+    )
+    .unwrap();
     let placement = Placement::from_full_graph(&solution_graph);
     let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
     eprintln!("positions generated!");
