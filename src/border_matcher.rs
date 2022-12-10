@@ -316,6 +316,18 @@ pub fn match_borders(
         return None;
     }
 
+    if is_picture_border_impl(&get_figure_border(lhs_figure, (lhs_border_id + 1) % 4))
+        != is_picture_border_impl(&get_figure_border(rhs_figure, (rhs_border_id + 3) % 4))
+    {
+        return None;
+    }
+
+    if is_picture_border_impl(&get_figure_border(lhs_figure, (lhs_border_id + 3) % 4))
+        != is_picture_border_impl(&get_figure_border(rhs_figure, (rhs_border_id + 1) % 4))
+    {
+        return None;
+    }
+
     let to_cs = estimate_coordinate_system_by_border(&lhs.border)?;
     let from_cs_estimation = estimate_coordinate_system_by_border(&rhs.border)?;
 

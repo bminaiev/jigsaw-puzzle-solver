@@ -30,6 +30,26 @@ pub struct RectsFitter {
 
 const OFFSET: f64 = 20.0;
 
+pub fn get_bounding_box(pts: &[PointF]) -> (PointF, PointF) {
+    let min_max = |f: fn(&PointF) -> f64| -> (f64, f64) {
+        (
+            pts.iter().map(f).min_by(f64::total_cmp).unwrap(),
+            pts.iter().map(f).max_by(f64::total_cmp).unwrap(),
+        )
+    };
+    let (min_x, max_x) = min_max(|p| p.x);
+    let (min_y, max_y) = min_max(|p| p.y);
+    let cur_start = PointF {
+        x: min_x - OFFSET,
+        y: min_y - OFFSET,
+    };
+    let cur_end = PointF {
+        x: max_x + OFFSET,
+        y: max_y + OFFSET,
+    };
+    (cur_start, cur_end)
+}
+
 impl RectsFitter {
     pub fn new() -> Self {
         Self {
@@ -42,22 +62,7 @@ impl RectsFitter {
 
     // returns shift, which we need to apply to points
     pub fn add_points(&mut self, pts: &[PointF]) -> PointF {
-        let min_max = |f: fn(&PointF) -> f64| -> (f64, f64) {
-            (
-                pts.iter().map(f).min_by(f64::total_cmp).unwrap(),
-                pts.iter().map(f).max_by(f64::total_cmp).unwrap(),
-            )
-        };
-        let (min_x, max_x) = min_max(|p| p.x);
-        let (min_y, max_y) = min_max(|p| p.y);
-        let cur_start = PointF {
-            x: min_x - OFFSET,
-            y: min_y - OFFSET,
-        };
-        let cur_end = PointF {
-            x: max_x + OFFSET,
-            y: max_y + OFFSET,
-        };
+        let (cur_start, cur_end) = get_bounding_box(pts);
         let mut options = vec![];
         for x in self.rects.iter().map(|r| r.end.x) {
             for y in self.rects.iter().map(|r| r.end.y) {

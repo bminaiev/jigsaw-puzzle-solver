@@ -17,6 +17,7 @@ use crate::{
     crop::crop,
     dsu::Dsu,
     figure::Figure,
+    graph_solver::PotentialSolution,
     parsed_puzzles::ParsedPuzzles,
     point::{Point, PointF},
     utils::{load_image_from_path, save_color_image},
@@ -33,11 +34,13 @@ pub struct MyWidget {
     mask_image: RetainedImage,
     parsed_puzzles: ParsedPuzzles,
     matched_borders: Vec<Vec<MatchResult>>,
-    positions: Vec<Option<Vec<PointF>>>,
+    solutions: Vec<PotentialSolution>,
     show_parsed: bool,
     show_image: bool,
     fig_colors: Vec<Color32>,
     show_matched_borders: bool,
+    piece_picker: String,
+    crop_enabled: bool,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -45,10 +48,11 @@ const ZOOM_DELTA_COEF: f32 = 500.0;
 impl MyWidget {
     pub fn new(
         path: &str,
-        positions: Vec<Option<Vec<PointF>>>,
+        solutions: Vec<PotentialSolution>,
         show_parsed: bool,
         show_image: bool,
         show_matched_borders: bool,
+        crop_enabled: bool,
     ) -> Self {
         let color_image = load_image_from_path(path).unwrap();
 
@@ -64,7 +68,7 @@ impl MyWidget {
         let image = RetainedImage::from_color_image("test", color_image.clone());
         let img_size = image.size_vec2();
         let mut rng = rand::thread_rng();
-        let fig_colors = (0..positions.len())
+        let fig_colors = (0..parsed_puzzles.figures.len())
             .map(|_| Color32::from_rgb(rng.gen(), rng.gen(), rng.gen()))
             .collect_vec();
         Self {
@@ -81,11 +85,13 @@ impl MyWidget {
             mask_image,
             parsed_puzzles,
             matched_borders: vec![vec![]; 4],
-            positions,
+            solutions,
             show_parsed,
             fig_colors,
             show_image,
             show_matched_borders,
+            piece_picker: String::new(),
+            crop_enabled,
         }
     }
 
@@ -246,6 +252,12 @@ impl MyWidget {
                 }
             }
         }
+
+        if let Ok(id) = self.piece_picker.parse::<usize>() {
+            if id < self.parsed_puzzles.figures.len() {
+                self.show_border(&self.parsed_puzzles.figures[id], ui);
+            }
+        }
     }
 
     fn show_best_matched_borders(&mut self, ui: &mut eframe::egui::Ui) {
@@ -327,7 +339,7 @@ impl MyWidget {
     }
 
     fn show_solution(&mut self, ui: &mut eframe::egui::Ui) {
-        if self.positions.is_empty() {
+        if self.solutions.is_empty() {
             return;
         }
 
@@ -342,29 +354,38 @@ impl MyWidget {
                 .rect_filled(rect, Rounding::default(), Color32::WHITE);
         }
 
-        for (fig_id, pos) in self.positions.iter().enumerate() {
-            if let Some(positions) = pos {
-                for (p1, p2) in positions.iter().circular_tuple_windows() {
+        for sol in self.solutions.iter() {
+            for fig in sol.placed_figures.iter() {
+                for (p1, p2) in fig.positions.iter().circular_tuple_windows() {
                     let p1 = self.convert_to_screen(p1.pos2() + offset);
                     let p2 = self.convert_to_screen(p2.pos2() + offset);
 
                     ui.painter()
-                        .line_segment([p1, p2], Stroke::new(3.0, self.fig_colors[fig_id]))
+                        .line_segment([p1, p2], Stroke::new(3.0, self.fig_colors[fig.figure_id]))
                 }
 
-                let center = self.convert_to_screen(calc_center(positions).pos2() + offset);
+                let center = self.convert_to_screen(calc_center(&fig.positions).pos2() + offset);
                 ui.painter().text(
                     center,
                     Align2::CENTER_CENTER,
-                    fig_id.to_string(),
+                    fig.figure_id.to_string(),
                     FontId::new(20.0, FontFamily::Monospace),
                     Color32::BLACK,
                 );
             }
+            ui.painter().text(
+                self.convert_to_screen(sol.text_offset.pos2() + offset + vec2(10.0, 10.0)),
+                Align2::LEFT_TOP,
+                format!("{:.3}", sol.placement_score),
+                FontId::new(20.0, FontFamily::Monospace),
+                Color32::BLACK,
+            );
         }
     }
 
     pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+        ui.text_edit_singleline(&mut self.piece_picker);
+
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
         {
             self.change_zoom(ui);
@@ -419,12 +440,7 @@ impl MyWidget {
                     }
 
                     let center = self.convert_to_screen(figure.center.pos2());
-                    let color = if self.positions.is_empty() || self.positions[figure_id].is_none()
-                    {
-                        Color32::BLACK
-                    } else {
-                        Color32::RED
-                    };
+                    let color = Color32::BLACK;
                     ui.painter().text(
                         center,
                         Align2::CENTER_CENTER,
@@ -439,7 +455,7 @@ impl MyWidget {
         self.show_solution(ui);
 
         let frame = self.frame.clone();
-        if self.show_image {
+        if self.crop_enabled {
             if ui.input().key_pressed(Key::Enter) {
                 dbg!("CROP!", &frame);
                 crop(&self.image_path, &frame);

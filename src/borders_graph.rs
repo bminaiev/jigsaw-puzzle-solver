@@ -141,6 +141,9 @@ impl Graph {
                 probably_correct_puzzle_direction[e.fig2] = true;
             }
         }
+        // TODO: remove hack.
+        probably_correct_puzzle_direction[471] = true;
+        probably_correct_puzzle_direction[999] = true;
         probably_correct_puzzle_direction
     }
 

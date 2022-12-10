@@ -117,9 +117,9 @@ fn save_debug(color_image: &ColorImage, average_color: &AverareColor, r: usize, 
             let c_av = average_color.get_averare_color(x, y, r);
 
             if get_sum(c1) > get_sum(c_av) + offset {
-                res[(x, y)] = Color32::BLACK;
+                res[(x, y)] = c1;
             } else {
-                res[(x, y)] = Color32::WHITE;
+                res[(x, y)] = Color32::BLACK;
             }
         }
     }
@@ -142,8 +142,8 @@ fn good_size_range(figures: &[Figure]) -> Range<usize> {
 impl ParsedPuzzles {
     pub fn new(color_image: &ColorImage) -> Self {
         let average_color = AverareColor::new(color_image);
-        const R: usize = 100;
-        const OFFSET: i32 = 100;
+        const R: usize = 200;
+        const OFFSET: i32 = 200;
 
         // for &r in [25, 50, 100, 200].iter() {
         //     for &offset in [20, 50, 100, 200].iter() {

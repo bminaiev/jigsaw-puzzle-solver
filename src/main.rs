@@ -8,12 +8,12 @@ use eframe::{egui, epaint::pos2};
 use crate::{
     borders_graph::Graph,
     crop::crop,
-    graph_solver::{solve_graph, solve_graph_border},
+    graph_solver::{solve_graph, solve_graph_border, PotentialSolution},
     my_widget::MyWidget,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
     point::PointF,
-    surface_placer::place_on_surface,
+    surface_placer::{place_on_surface, put_solutions_on_surface},
     utils::load_image_from_path,
 };
 
@@ -35,8 +35,8 @@ mod surface_placer;
 mod topn;
 mod utils;
 
-const BEFORE_CROP_PATH: &str = "img/prod2/4.jpg";
-const PATH: &str = "img/prod2/crop_join.jpg";
+const BEFORE_CROP_PATH: &str = "img/prod2/24.jpg";
+const PATH: &str = "img/prod2/crop2_full.jpg";
 const GRAPH_PATH: &str = "graph_with_start.json";
 const GRAPH_SOLUTION_PATH: &str = "graph_solution.json";
 const LOAD_EXISTING_SOLUTION: bool = false;
@@ -45,22 +45,24 @@ const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 460;
 
 // TODO: nicer type
 fn main_ui(
-    positions: Vec<Option<Vec<PointF>>>,
+    solutions: Vec<PotentialSolution>,
     path: &str,
     show_parsed: bool,
     show_image: bool,
     show_matched_borders: bool,
+    crop_enabled: bool,
 ) {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(1400.0, 1100.0)),
         ..Default::default()
     };
     let app_created = Box::new(MyApp::new(
-        positions,
+        solutions,
         path,
         show_parsed,
         show_image,
         show_matched_borders,
+        crop_enabled,
     ));
     eframe::run_native("jigsaw solver", options, Box::new(|_| app_created));
 }
@@ -78,48 +80,32 @@ fn main_load_graph() {
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
 
-    let solution_graph = {
+    let mut solution_graph = {
         let mut prev_state: Option<Graph> = if LOAD_EXISTING_SOLUTION {
             Some(serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap())
         } else {
             None
         };
-        let at_most_vertices = prev_state.as_ref().map(|x| x.num_vertices()).unwrap_or(0) + 1000;
-        loop {
-            let last_sz = prev_state.as_ref().map(|x| x.num_vertices()).unwrap_or(0);
-            let res = solve_graph(&graph, &parsed_puzzles, prev_state.clone());
-            let new_vertices = res.num_vertices();
-            prev_state = Some(res);
-            if new_vertices > last_sz && new_vertices < at_most_vertices {
-                eprintln!("Need at least one more iteration...");
-                fs::write(
-                    GRAPH_SOLUTION_PATH,
-                    serde_json::to_string(prev_state.as_ref().unwrap()).unwrap(),
-                )
-                .unwrap();
-            } else {
-                break;
-            }
-        }
-        prev_state.unwrap()
+        solve_graph(&graph, &parsed_puzzles, prev_state.clone())
     };
-    fs::write(
-        GRAPH_SOLUTION_PATH,
-        serde_json::to_string(&solution_graph).unwrap(),
-    )
-    .unwrap();
-    let placement = Placement::from_full_graph(&solution_graph);
-    let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
+    // fs::write(
+    //     GRAPH_SOLUTION_PATH,
+    //     serde_json::to_string(&solution_graph).unwrap(),
+    // )
+    // .unwrap();
+    // let placement = Placement::from_full_graph(&solution_graph);
+    // let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
+    put_solutions_on_surface(&mut solution_graph);
     eprintln!("positions generated!");
-    main_ui(positions, PATH, true, false, true);
+    main_ui(solution_graph, PATH, true, false, true, false);
 }
 
 fn main_before_crop() {
-    main_ui(vec![], BEFORE_CROP_PATH, false, true, false);
+    main_ui(vec![], BEFORE_CROP_PATH, false, true, false, true);
 }
 
 fn main_check_parsing() {
-    main_ui(vec![], PATH, true, true, true);
+    main_ui(vec![], PATH, true, true, true, false);
 }
 
 fn main_check_crop() {
@@ -145,19 +131,21 @@ struct MyApp {
 
 impl MyApp {
     fn new(
-        positions: Vec<Option<Vec<PointF>>>,
+        solutions: Vec<PotentialSolution>,
         path: &str,
         show_parsed: bool,
         show_image: bool,
         show_matched_borders: bool,
+        crop_enabled: bool,
     ) -> Self {
         Self {
             my_widget: MyWidget::new(
                 path,
-                positions,
+                solutions,
                 show_parsed,
                 show_image,
                 show_matched_borders,
+                crop_enabled,
             ),
         }
     }

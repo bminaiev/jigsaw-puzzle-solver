@@ -16,10 +16,11 @@ use crate::{
     coordinate_system::CoordinateSystem,
     dsu::Dsu,
     figure::Figure,
+    graph_solver::PotentialSolution,
     parsed_puzzles::ParsedPuzzles,
-    placement::Placement,
+    placement::{Placement, PotentialLocation},
     point::{Point, PointF},
-    rects_fitter::RectsFitter,
+    rects_fitter::{get_bounding_box, RectsFitter},
     utils::{fmax, fmin, Side},
 };
 
@@ -75,7 +76,10 @@ impl EdgesScores {
     }
 
     pub fn get_final_score(&self) -> f64 {
-        self.all_scores.iter().sum()
+        if self.all_scores.is_empty() {
+            return 0.0;
+        }
+        self.all_scores.iter().sum::<f64>() / self.all_scores.len() as f64
     }
 }
 
@@ -133,7 +137,7 @@ fn local_optimize_positions(
     positions: &mut [Option<Vec<PointF>>],
     parsed_puzzles: &ParsedPuzzles,
     cur_component: &[usize],
-) {
+) -> f64 {
     let local_id_mapping: BTreeMap<usize, usize> = cur_component
         .iter()
         .enumerate()
@@ -152,9 +156,9 @@ fn local_optimize_positions(
         })
         .collect_vec();
 
-    for glob_iter in 0..1 {
-        eprintln!("global iter: {glob_iter}");
+    let mut final_score = 0.0;
 
+    for glob_iter in 0..1 {
         let move_cs = cur_component
             .iter()
             .map(|&v| MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap()))
@@ -198,6 +202,7 @@ fn local_optimize_positions(
         let to_cs =
             local_optimize_coordinate_systems(&to_cs, |to_cs| calc_score(to_cs).get_final_score());
         let new_score = calc_score(&to_cs);
+        final_score = new_score.get_final_score();
         if new_score.get_final_score() < start_score.get_final_score() {
             let new_pos = calc_new_positions(&to_cs);
             for local_id in 0..cur_component.len() {
@@ -207,9 +212,10 @@ fn local_optimize_positions(
             break;
         }
     }
+    final_score
 }
 
-fn rotate_component(
+pub fn rotate_component(
     component: &[usize],
     positions: &mut Vec<Option<Vec<PointF>>>,
     graph: &Graph,
@@ -255,13 +261,12 @@ fn rotate_component(
     }
 }
 
-fn place_one_connected_component(
+pub fn place_one_connected_component(
     parsed_puzzles: &ParsedPuzzles,
     component: &[usize],
     used_edges: &[(Side, Side)],
     positions: &mut Vec<Option<Vec<PointF>>>,
-    graph: &Graph,
-) {
+) -> f64 {
     let mut matched_borders = BTreeMap::new();
 
     for &(s1, s2) in used_edges.iter() {
@@ -277,8 +282,6 @@ fn place_one_connected_component(
 
         matched_borders.insert((s1, s2), match_res);
     }
-
-    eprintln!("Built all borders default matchers.");
 
     let root = component[0];
     positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
@@ -319,8 +322,6 @@ fn place_one_connected_component(
                 changed = true;
 
                 let match_res = &matched_borders[&(s1, s2)];
-
-                eprintln!("score = {}", match_res.score);
 
                 to_cs[s2.fig] = Some(predict_to_cs_based_on_edge(
                     s1.fig, &to_cs, s2.fig, match_res,
@@ -374,10 +375,7 @@ fn place_one_connected_component(
         );
     }
 
-    eprintln!("Do local optimizations!");
-    local_optimize_positions(used_edges, positions, parsed_puzzles, component);
-    eprintln!("Rotate component!");
-    rotate_component(component, positions, graph, parsed_puzzles);
+    local_optimize_positions(used_edges, positions, parsed_puzzles, component)
 }
 
 pub fn place_on_surface(
@@ -410,13 +408,10 @@ pub fn place_on_surface(
             .cloned()
             .collect_vec();
 
-        place_one_connected_component(
-            parsed_puzzles,
-            &cur_component,
-            &used_edges,
-            &mut positions,
-            graph,
-        );
+        place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions);
+
+        eprintln!("Rotate component!");
+        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles);
 
         {
             let new_pts = cur_component
@@ -435,4 +430,24 @@ pub fn place_on_surface(
     }
 
     positions
+}
+
+pub fn put_solutions_on_surface(solutions: &mut [PotentialSolution]) {
+    let mut rects_fitter = RectsFitter::new();
+    for i in 0..solutions.len() {
+        let new_pts: Vec<PointF> = solutions[i]
+            .placed_figures
+            .iter()
+            .flat_map(|pf| pf.positions.iter())
+            .cloned()
+            .collect();
+        let bbox = get_bounding_box(&new_pts);
+        let shift = rects_fitter.add_points(&new_pts);
+        for fig in solutions[i].placed_figures.iter_mut() {
+            for p in fig.positions.iter_mut() {
+                *p = *p + shift;
+            }
+        }
+        solutions[i].text_offset = bbox.0 + shift;
+    }
 }

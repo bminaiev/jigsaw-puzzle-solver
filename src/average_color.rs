@@ -18,7 +18,7 @@ impl AverareColor {
         let pref_sum = vec![[0; 3]; (size[0] + 1) * (size[1] + 1)];
         let mut res = Self {
             width: size[0],
-            height: size[0],
+            height: size[1],
             pref_sum,
         };
         for x in 0..size[0] {
