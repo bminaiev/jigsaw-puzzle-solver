@@ -165,6 +165,33 @@ pub struct PotentialSolution {
     pub text_offset: PointF,
 }
 
+pub fn find_sides_by_known_edge(
+    fig1: usize,
+    fig2: usize,
+    mut dist: impl FnMut(Side, Side) -> f64,
+) -> (Side, Side) {
+    let mut best_score = f64::MAX;
+    let mut best_sides = None;
+    for side1 in 0..4 {
+        for side2 in 0..4 {
+            let s1 = Side {
+                fig: fig1,
+                side: side1,
+            };
+            let s2 = Side {
+                fig: fig2,
+                side: side2,
+            };
+            let score = dist(s1, s2);
+            if score < best_score {
+                best_score = score;
+                best_sides = Some((s1, s2));
+            }
+        }
+    }
+    best_sides.unwrap()
+}
+
 pub fn solve_graph(
     graph: &Graph,
     parsed_puzzles: &ParsedPuzzles,
@@ -335,29 +362,18 @@ pub fn solve_graph(
             //     //     // (756, 436),
             //     //     // (436, 815),
             // ];
-            let tested_edges = vec![(999, 926), (999, 574), (926, 637), (574, 963)];
+            // let tested_edges = vec![
+            //     (999, 926),
+            //     (999, 574),
+            //     (926, 637),
+            //     // (574, 963),
+            //     (926, 421),
+            //     (683, 421),
+            // ];
             // let tested_edges = vec![(439, 570), (570, 548)];
+            let tested_edges = vec![(458, 777)];
             for (fig1, fig2) in tested_edges.into_iter() {
-                let mut best_score = f64::MAX;
-                let mut best_sides = None;
-                for side1 in 0..4 {
-                    for side2 in 0..4 {
-                        let s1 = Side {
-                            fig: fig1,
-                            side: side1,
-                        };
-                        let s2 = Side {
-                            fig: fig2,
-                            side: side2,
-                        };
-                        let score = dist(s1, s2);
-                        if score < best_score {
-                            best_score = score;
-                            best_sides = Some((s1, s2));
-                        }
-                    }
-                }
-                let (s1, s2) = best_sides.unwrap();
+                let (s1, s2) = find_sides_by_known_edge(fig1, fig2, dist);
                 eprintln!(
                     "Use start edge: {:?} - {:?}. score = {}",
                     s1,
@@ -386,14 +402,14 @@ pub fn solve_graph(
     //     973, 427, 238, 947, 887, 783, 1035, 673, 890, 498, 324, 490,
     // ];
 
-    // let banned_figures: [usize; 0] = [];
-    let banned_figures = [644, 229];
+    let banned_figures: [usize; 0] = [];
+    // let banned_figures = [716, 912, 928, 114, 656, 719];
     // let banned_figures = [
     //     864, 267, 783, 190, 275, 179, 427, 238, 890, 1035, 275, 583, 783, 673, 934, 929, 864, 989,
     //     931, 568, 190, 291, 162, 745, 132, 606,
     // ];
 
-    let max_v = start_vertices_num + 4;
+    let max_v = start_vertices_num + 2;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
 

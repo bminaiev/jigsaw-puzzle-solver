@@ -16,7 +16,7 @@ use crate::{
     dsu::Dsu,
     figure::{BorderFigure, Figure},
     point::Point,
-    utils::save_color_image,
+    utils::{save_color_image, Side},
     PUZZLE_PIXEL_WHITE_THRESHOLD,
 };
 
@@ -291,5 +291,17 @@ impl ParsedPuzzles {
                 None
             })
             .collect_vec()
+    }
+
+    pub fn gen_all_sides(&self) -> Vec<Side> {
+        let mut res = vec![];
+        for fig in 0..self.figures.len() {
+            if self.figures[fig].is_good_puzzle() {
+                for side in 0..4 {
+                    res.push(Side { fig, side });
+                }
+            }
+        }
+        res
     }
 }

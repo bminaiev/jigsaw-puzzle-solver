@@ -5,8 +5,9 @@ use itertools::Itertools;
 use crate::{
     coordinate_system::CoordinateSystem,
     figure::Figure,
+    parsed_puzzles::ParsedPuzzles,
     point::{find_center, PointF},
-    utils::{fmax, fmin},
+    utils::{fmax, fmin, Side},
 };
 
 pub struct BorderAndNeighbors {
@@ -16,7 +17,7 @@ pub struct BorderAndNeighbors {
 }
 
 impl BorderAndNeighbors {
-    pub const NEIGHBORS: usize = 5;
+    pub const NEIGHBORS: usize = 10;
 
     pub fn reverse(&self) -> Self {
         let mut border = self.border.clone();
@@ -102,7 +103,7 @@ pub fn match_placed_borders(lhs: &BorderAndNeighbors, rhs: &BorderAndNeighbors) 
     let center = match_placed_borders_center(&lhs.border, &rhs.border);
     let prev = match_side_borders(&lhs.prev, &rhs.prev);
     let next = match_side_borders(&lhs.next, &rhs.next);
-    center + (prev + next) * 2.0
+    center + (prev + next) * 7.0
 }
 
 #[derive(Clone)]
@@ -299,31 +300,30 @@ fn get_figure_border_and_neighbors(figure: &Figure, border_id: usize) -> BorderA
     }
 }
 
-// TODO: use `Side` type
 pub fn match_borders(
-    lhs_figure: &Figure,
-    lhs_border_id: usize,
-    rhs_figure: &Figure,
-    rhs_border_id: usize,
-    lhs_id: usize,
-    rhs_id: usize,
+    parsed_puzzles: &ParsedPuzzles,
+    side1: Side,
+    side2: Side,
 ) -> Option<MatchResult> {
-    let lhs = get_figure_border_and_neighbors(&lhs_figure, lhs_border_id);
-    let rhs = get_figure_border_and_neighbors(&rhs_figure, rhs_border_id);
+    let lhs_figure = &parsed_puzzles.figures[side1.fig];
+    let rhs_figure = &parsed_puzzles.figures[side2.fig];
+
+    let lhs = get_figure_border_and_neighbors(&lhs_figure, side1.side);
+    let rhs = get_figure_border_and_neighbors(&rhs_figure, side2.side);
     let rhs = rhs.reverse();
 
     if is_picture_border_impl(&lhs.border) || is_picture_border_impl(&rhs.border) {
         return None;
     }
 
-    if is_picture_border_impl(&get_figure_border(lhs_figure, (lhs_border_id + 1) % 4))
-        != is_picture_border_impl(&get_figure_border(rhs_figure, (rhs_border_id + 3) % 4))
+    if is_picture_border_impl(&get_figure_border(lhs_figure, (side1.side + 1) % 4))
+        != is_picture_border_impl(&get_figure_border(rhs_figure, (side2.side + 3) % 4))
     {
         return None;
     }
 
-    if is_picture_border_impl(&get_figure_border(lhs_figure, (lhs_border_id + 3) % 4))
-        != is_picture_border_impl(&get_figure_border(rhs_figure, (rhs_border_id + 1) % 4))
+    if is_picture_border_impl(&get_figure_border(lhs_figure, (side1.side + 3) % 4))
+        != is_picture_border_impl(&get_figure_border(rhs_figure, (side2.side + 1) % 4))
     {
         return None;
     }
@@ -362,8 +362,8 @@ pub fn match_borders(
             .iter()
             .map(|p| conv_point(&from_cs, p.conv_f64()))
             .collect_vec(),
-        lhs_id,
-        rhs_id,
+        side1.fig,
+        side2.fig,
     );
     Some(res)
 }

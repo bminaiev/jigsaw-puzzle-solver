@@ -106,9 +106,7 @@ impl Graph {
                             fig2,
                         )
                         .is_some();
-                        if let Some(res) =
-                            match_borders(&figures[fig1], side1, &figures[fig2], side2, fig1, fig2)
-                        {
+                        if let Some(res) = match_borders(parsed_puzzles, s1, s2) {
                             let score = res.score;
                             all_edges.push(Edge {
                                 fig1,
@@ -144,6 +142,7 @@ impl Graph {
         // TODO: remove hack.
         probably_correct_puzzle_direction[471] = true;
         probably_correct_puzzle_direction[999] = true;
+        probably_correct_puzzle_direction[458] = true;
         probably_correct_puzzle_direction
     }
 

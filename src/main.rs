@@ -8,6 +8,7 @@ use eframe::{egui, epaint::pos2};
 use crate::{
     borders_graph::Graph,
     crop::crop,
+    edge_score_optimizer::optimize_edge_scores,
     graph_solver::{solve_graph, solve_graph_border, PotentialSolution},
     my_widget::MyWidget,
     parsed_puzzles::ParsedPuzzles,
@@ -23,6 +24,7 @@ mod borders_graph;
 mod coordinate_system;
 mod crop;
 mod dsu;
+mod edge_score_optimizer;
 mod figure;
 mod graph_solver;
 mod matcher_tests;
@@ -118,11 +120,20 @@ fn main_check_crop() {
     crop(BEFORE_CROP_PATH, &pts);
 }
 
+fn main_optimize_edge_scoring() {
+    let color_image = load_image_from_path(PATH).unwrap();
+    let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
+    let parsed_puzzles = ParsedPuzzles::new(&color_image);
+
+    optimize_edge_scores(&parsed_puzzles, &graph);
+}
+
 fn main() {
     // main_before_crop();
     // main_check_parsing();
     // main_build_graph();
     main_load_graph();
+    // main_optimize_edge_scoring();
 }
 
 struct MyApp {

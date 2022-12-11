@@ -20,7 +20,7 @@ use crate::{
     graph_solver::PotentialSolution,
     parsed_puzzles::ParsedPuzzles,
     point::{Point, PointF},
-    utils::{load_image_from_path, save_color_image},
+    utils::{load_image_from_path, save_color_image, Side},
 };
 
 use itertools::Itertools;
@@ -235,12 +235,15 @@ impl MyWidget {
                             if other_figure.is_good_puzzle() {
                                 for j in 0..4 {
                                     if let Some(result) = match_borders(
-                                        figure,
-                                        i,
-                                        other_figure,
-                                        j,
-                                        figure_id,
-                                        other_figure_id,
+                                        &self.parsed_puzzles,
+                                        Side {
+                                            fig: figure_id,
+                                            side: i,
+                                        },
+                                        Side {
+                                            fig: other_figure_id,
+                                            side: j,
+                                        },
                                     ) {
                                         self.matched_borders[i].push(result);
                                     }
