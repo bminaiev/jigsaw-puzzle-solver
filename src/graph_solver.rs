@@ -358,32 +358,98 @@ pub fn solve_graph(
             // let tested_edges = vec![
             //     (471, 974),
             //     (417, 471),
-            //     // (713, 974),
+            //     (713, 974),
             //     (871, 974),
-            //     // (713, 756),
-            //     //     // (756, 436),
-            //     //     // (436, 815),
+            //     (713, 756),
+            //     (713, 337),
+            //     (756, 436),
+            //     (436, 815),
+            //     (756, 383),
+            //     (258, 436),
             // ];
+            let field = [
+                [969, 343, 637, 926, 999],
+                [676, 142, 683, 421, 574],
+                [-1, 215, 827, 424, 963],
+                [-1, -1, 882, 448, 995],
+                [-1, -1, 980, 508, 628],
+            ];
+            let cnt_known = field.iter().flatten().filter(|&id| *id >= 0).count();
+            let mut all_potential_edges = vec![];
+            for r in 0..field.len() {
+                for c in 0..field[r].len() {
+                    for dr in [0, 1] {
+                        let dc = 1 - dr;
+                        if r + dr < field.len() && c + dc < field[r].len() {
+                            let id1 = field[r][c];
+                            let id2 = field[r + dr][c + dc];
+                            if id1 >= 0 && id2 >= 0 {
+                                let id1 = id1 as usize;
+                                let id2 = id2 as usize;
+                                for side1 in 0..4 {
+                                    for side2 in 0..4 {
+                                        let s1 = Side {
+                                            fig: id1,
+                                            side: side1,
+                                        };
+                                        let s2 = Side {
+                                            fig: id2,
+                                            side: side2,
+                                        };
+                                        all_potential_edges.push((s1, s2));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            all_potential_edges
+                .sort_by(|&(s1, s2), &(s3, s4)| dist(s1, s2).total_cmp(&dist(s3, s4)));
+            let mut placement = Placement::new();
+            for &(s1, s2) in all_potential_edges.iter() {
+                placement.join_sides(s1, s2);
+            }
+            assert_eq!(placement.get_cnt_figures(), cnt_known);
+            let (b_min, b_max) = normalize_bounding_box(placement.get_bounding_box());
+            let (exp_min, exp_max) = (
+                min(field.len(), field[0].len()),
+                max(field.len(), field[0].len()),
+            );
+            assert_eq!(b_min as usize, exp_min);
+            assert_eq!(b_max as usize, exp_max);
+
+            start_state_edges.extend(placement.get_all_neighbours());
+
             // let tested_edges = vec![
             //     (999, 926),
             //     (999, 574),
             //     (926, 637),
-            //     // (574, 963),
+            //     (574, 963),
             //     (926, 421),
             //     (683, 421),
+            //     (827, 683),
+            //     (424, 421),
+            //     (343, 637),
+            //     (343, 142),
+            //     (142, 215),
+            //     (995, 963),
+            //     (995, 448),
+            //     (448, 882),
             // ];
+
             // let tested_edges = vec![(439, 570), (570, 548)];
-            let tested_edges = vec![(458, 777)];
-            for (fig1, fig2) in tested_edges.into_iter() {
-                let (s1, s2) = find_sides_by_known_edge(fig1, fig2, dist);
-                eprintln!(
-                    "Use start edge: {:?} - {:?}. score = {}",
-                    s1,
-                    s2,
-                    dist(s1, s2)
-                );
-                start_state_edges.push((s1, s2));
-            }
+            // let tested_edges = vec![(458, 777)];
+            // for (fig1, fig2) in tested_edges.into_iter() {
+            //     let (s1, s2) = find_sides_by_known_edge(fig1, fig2, dist);
+            //     eprintln!(
+            //         "Use start edge: {:?} - {:?}. score = {}",
+            //         s1,
+            //         s2,
+            //         dist(s1, s2)
+            //     );
+            //     start_state_edges.push((s1, s2));
+            // }
         }
         if start_state_edges.is_empty() {
             start_state_edges.push((twos[0].s0, twos[0].s1));
@@ -411,7 +477,7 @@ pub fn solve_graph(
     //     931, 568, 190, 291, 162, 745, 132, 606,
     // ];
 
-    let max_v = start_vertices_num + 2;
+    let max_v = start_vertices_num + 5;
     for cnt_vertices in start_vertices_num..min(max_v, pq.len()) {
         let mut iter = 0;
 
