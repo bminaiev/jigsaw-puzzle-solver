@@ -10,6 +10,7 @@ use crate::{
 
 use itertools::Itertools;
 use ndarray::Array4;
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,49 +81,56 @@ impl Graph {
 
         for fig1 in 0..figures.len() {
             eprintln!("{}/{}", fig1, figures.len());
-            for fig2 in fig1 + 1..figures.len() {
-                if !figures[fig1].is_good_puzzle() || !figures[fig2].is_good_puzzle() {
-                    continue;
-                }
-                for side1 in 0..4 {
-                    for side2 in 0..4 {
-                        let s1 = Side {
-                            fig: fig1,
-                            side: side1,
-                        };
-                        let s2 = Side {
-                            fig: fig2,
-                            side: side2,
-                        };
-                        if !ok_sides.contains(&s1) || !ok_sides.contains(&s2) {
-                            continue;
-                        }
-                        let existing_edge = match_borders_without_move(
-                            &figures[fig1],
-                            side1,
-                            &figures[fig2],
-                            side2,
-                            fig1,
-                            fig2,
-                        )
-                        .is_some();
-                        if let Some(res) = match_borders(parsed_puzzles, s1, s2) {
-                            let score = res.score;
-                            all_edges.push(Edge {
+            let more_edges: Vec<_> = (fig1 + 1..figures.len())
+                .into_par_iter()
+                .map(|fig2| {
+                    if !figures[fig1].is_good_puzzle() || !figures[fig2].is_good_puzzle() {
+                        return vec![];
+                    }
+                    let mut new_edges = vec![];
+                    for side1 in 0..4 {
+                        for side2 in 0..4 {
+                            let s1 = Side {
+                                fig: fig1,
+                                side: side1,
+                            };
+                            let s2 = Side {
+                                fig: fig2,
+                                side: side2,
+                            };
+                            if !ok_sides.contains(&s1) || !ok_sides.contains(&s2) {
+                                continue;
+                            }
+                            let existing_edge = match_borders_without_move(
+                                &figures[fig1],
+                                side1,
+                                &figures[fig2],
+                                side2,
                                 fig1,
                                 fig2,
-                                side1,
-                                side2,
-                                score,
-                                existing_edge,
-                            });
-                            if existing_edge {
-                                eprintln!("Add existing edge: {fig1} {fig2}");
+                            )
+                            .is_some();
+                            if let Some(res) = match_borders(parsed_puzzles, s1, s2) {
+                                let score = res.score;
+                                new_edges.push(Edge {
+                                    fig1,
+                                    fig2,
+                                    side1,
+                                    side2,
+                                    score,
+                                    existing_edge,
+                                });
+                                if existing_edge {
+                                    eprintln!("Add existing edge: {fig1} {fig2}");
+                                }
                             }
                         }
                     }
-                }
-            }
+                    new_edges
+                })
+                .flatten()
+                .collect();
+            all_edges.extend(more_edges);
         }
         Graph {
             n: parsed_puzzles.figures.len(),

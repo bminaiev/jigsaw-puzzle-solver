@@ -94,7 +94,9 @@ pub fn gauss(matrix: &mut [Vec<f64>]) -> Vec<f64> {
             }
         }
         matrix.swap(c, best_r);
-        assert!(matrix[c][c] != 0.0);
+        if matrix[c][c] == 0.0 {
+            continue;
+        }
         let mul = 1.0 / matrix[c][c];
         for x in matrix[c].iter_mut() {
             *x *= mul;

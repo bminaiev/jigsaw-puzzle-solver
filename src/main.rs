@@ -134,8 +134,8 @@ fn main() {
     // main_before_crop();
     // main_check_parsing();
     // main_build_graph();
-    // main_load_graph();
-    main_optimize_edge_scoring();
+    main_load_graph();
+    // main_optimize_edge_scoring();
 }
 
 struct MyApp {
