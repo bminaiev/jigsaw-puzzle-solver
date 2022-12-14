@@ -163,6 +163,8 @@ pub struct PotentialSolution {
     pub placed_figures: Vec<PlacedFigure>,
     pub placement_score: f64,
     pub text_offset: PointF,
+    pub additional_text: String,
+    pub debug_lines: Vec<Vec<PointF>>,
 }
 
 pub fn find_sides_by_known_edge(
@@ -539,6 +541,8 @@ pub fn solve_graph(
             placed_figures,
             placement_score,
             text_offset: PointF { x: 0.0, y: 0.0 },
+            additional_text: "".to_owned(),
+            debug_lines: vec![],
         });
     }
     solutions.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));

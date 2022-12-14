@@ -10,7 +10,7 @@ use eframe::{
 };
 use egui_extras::RetainedImage;
 use image::ImageBuffer;
-use rand::Rng;
+use rand::{rngs::ThreadRng, Rng};
 
 use crate::{
     border_matcher::{match_borders, MatchResult},
@@ -45,6 +45,17 @@ pub struct MyWidget {
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
 
+fn gen_good_color(rng: &mut ThreadRng) -> Color32 {
+    let parts: [u8; 3] = [rng.gen(), rng.gen(), rng.gen()];
+    let mut parts_sorted = parts.clone();
+    parts_sorted.sort();
+    if parts_sorted[2] - parts_sorted[0] < 100 {
+        // avoid too grey colors
+        return gen_good_color(rng);
+    }
+    Color32::from_rgb(parts[0], parts[1], parts[2])
+}
+
 impl MyWidget {
     pub fn new(
         path: &str,
@@ -69,7 +80,7 @@ impl MyWidget {
         let img_size = image.size_vec2();
         let mut rng = rand::thread_rng();
         let fig_colors = (0..parsed_puzzles.figures.len())
-            .map(|_| Color32::from_rgb(rng.gen(), rng.gen(), rng.gen()))
+            .map(|_| gen_good_color(&mut rng))
             .collect_vec();
         Self {
             offset: vec2(0.0, 0.0),
@@ -359,12 +370,20 @@ impl MyWidget {
 
         for sol in self.solutions.iter() {
             for fig in sol.placed_figures.iter() {
+                let color = self.fig_colors[fig.figure_id];
                 for (p1, p2) in fig.positions.iter().circular_tuple_windows() {
                     let p1 = self.convert_to_screen(p1.pos2() + offset);
                     let p2 = self.convert_to_screen(p2.pos2() + offset);
 
-                    ui.painter()
-                        .line_segment([p1, p2], Stroke::new(3.0, self.fig_colors[fig.figure_id]))
+                    ui.painter().line_segment([p1, p2], Stroke::new(3.0, color))
+                }
+
+                for &pos in self.parsed_puzzles.figures[fig.figure_id]
+                    .corner_positions
+                    .iter()
+                {
+                    let p = self.convert_to_screen(fig.positions[pos].pos2() + offset);
+                    ui.painter().add(Shape::circle_filled(p, 4.0, color));
                 }
 
                 let center = self.convert_to_screen(calc_center(&fig.positions).pos2() + offset);
@@ -376,10 +395,18 @@ impl MyWidget {
                     Color32::BLACK,
                 );
             }
+            for debug_line in sol.debug_lines.iter() {
+                for w in debug_line.windows(2) {
+                    let p1 = self.convert_to_screen(w[0].pos2() + offset);
+                    let p2 = self.convert_to_screen(w[1].pos2() + offset);
+                    ui.painter()
+                        .line_segment([p1, p2], Stroke::new(3.0, Color32::BLACK));
+                }
+            }
             ui.painter().text(
                 self.convert_to_screen(sol.text_offset.pos2() + offset + vec2(10.0, 10.0)),
                 Align2::LEFT_TOP,
-                format!("{:.3}", sol.placement_score),
+                format!("{:.3}{}", sol.placement_score, sol.additional_text),
                 FontId::new(20.0, FontFamily::Monospace),
                 Color32::BLACK,
             );

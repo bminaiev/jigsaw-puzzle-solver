@@ -1,5 +1,6 @@
 use eframe::epaint::ColorImage;
 use image::ImageBuffer;
+use itertools::Itertools;
 
 pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError> {
     let image = image::io::Reader::open(path)?.decode()?;
@@ -72,4 +73,45 @@ pub fn save_color_image(color_image: &ColorImage, path: &str) {
         }
     }
     new_img.save(path).unwrap();
+}
+
+pub fn dedup_edges(used_edges: &[(Side, Side)]) -> Vec<(Side, Side)> {
+    let mut used_edges = used_edges
+        .iter()
+        .map(|&(s1, s2)| if s1 < s2 { (s1, s2) } else { (s2, s1) })
+        .collect_vec();
+    used_edges.sort();
+    used_edges.dedup();
+    used_edges
+}
+
+pub fn gauss(matrix: &mut [Vec<f64>]) -> Vec<f64> {
+    for c in 0..matrix[0].len() - 1 {
+        let mut best_r = c;
+        for r in c..matrix.len() {
+            if matrix[r][c].abs() > matrix[best_r][c].abs() {
+                best_r = r;
+            }
+        }
+        matrix.swap(c, best_r);
+        assert!(matrix[c][c] != 0.0);
+        let mul = 1.0 / matrix[c][c];
+        for x in matrix[c].iter_mut() {
+            *x *= mul;
+        }
+        for r2 in 0..matrix.len() {
+            if r2 == c {
+                continue;
+            }
+            let mul = matrix[r2][c];
+            for c2 in 0..matrix[r2].len() {
+                matrix[r2][c2] -= mul * matrix[c][c2];
+            }
+        }
+    }
+    let mut res = vec![0.0; matrix.len()];
+    for i in 0..res.len() {
+        res[i] = -matrix[i].last().unwrap();
+    }
+    res
 }

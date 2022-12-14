@@ -125,15 +125,17 @@ fn main_optimize_edge_scoring() {
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
 
-    optimize_edge_scores(&parsed_puzzles, &graph);
+    let mut solutions = optimize_edge_scores(&parsed_puzzles, &graph, true);
+    put_solutions_on_surface(&mut solutions);
+    main_ui(solutions, PATH, true, false, true, false);
 }
 
 fn main() {
     // main_before_crop();
     // main_check_parsing();
     // main_build_graph();
-    main_load_graph();
-    // main_optimize_edge_scoring();
+    // main_load_graph();
+    main_optimize_edge_scoring();
 }
 
 struct MyApp {

@@ -7,7 +7,7 @@ use crate::{
     figure::Figure,
     parsed_puzzles::ParsedPuzzles,
     point::{find_center, PointF},
-    utils::{fmax, fmin, Side},
+    utils::{fmax, fmin, gauss, Side},
 };
 
 pub struct BorderAndNeighbors {
@@ -22,11 +22,11 @@ impl BorderAndNeighbors {
     pub fn reverse(&self) -> Self {
         let mut border = self.border.clone();
         border.reverse();
-        let mut prev = self.next.clone();
-        prev.reverse();
-        let mut next = self.prev.clone();
-        next.reverse();
-        Self { border, prev, next }
+        Self {
+            border,
+            prev: self.next.clone(),
+            next: self.prev.clone(),
+        }
     }
 }
 
@@ -35,7 +35,10 @@ pub fn match_placed_borders_center(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     // TODO: smarter logic
 
     const CHECK_NEXT: usize = 5;
+    const OK_MIN_DIFF: f64 = 0.2;
     let score_one_side = |lhs: &[PointF], rhs: &[PointF]| -> f64 {
+        let socket_detector = SocketDetector::new(lhs);
+
         let mut iter = 0;
         let mut sum_dists = 0.0;
         for p in lhs.iter() {
@@ -50,7 +53,13 @@ pub fn match_placed_borders_center(lhs: &[PointF], rhs: &[PointF]) -> f64 {
                 }
             }
             iter += min_shift;
-            sum_dists += dists[min_shift];
+            let coef = if socket_detector.is_socket_point(p) {
+                1.0
+            } else {
+                4.0
+            };
+
+            sum_dists += coef * fmax(0.0, dists[min_shift] - OK_MIN_DIFF);
         }
         sum_dists / (lhs.len() as f64)
     };
@@ -99,11 +108,135 @@ fn match_side_borders(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     res / cnt
 }
 
+fn local_optimize(coefs: &mut [f64], mut f: impl FnMut(&[f64]) -> f64, max_iters: usize) {
+    let mut change = 1.0;
+    const MULT: f64 = 0.5;
+    const MIN_DELTA: f64 = 1e-5;
+    let mut last_score = f(coefs);
+    for iters in 0..max_iters {
+        if change < MIN_DELTA {
+            // eprintln!("finished after {iters}");
+            return;
+        }
+        let mut changed = false;
+        for pos in 0..coefs.len() {
+            for sign in [-1.0, 1.0].iter() {
+                coefs[pos] += sign * change;
+                let new_score = f(coefs);
+                if new_score < last_score {
+                    last_score = new_score;
+                    changed = true;
+                } else {
+                    coefs[pos] -= sign * change;
+                }
+            }
+        }
+        if !changed {
+            change *= MULT;
+        }
+    }
+}
+
+// sum (ax^2 + bx + c - y) * (ax^2 + bx + c - y) -> min
+// z0 * a^2 + z1 * b^2 + z2 * c^2 + z3 * a * b + ... -> min
+// df/da = 0
+// 2a * z0 + z3 * b + z4 * c + z6 = 0
+fn find_polynomial_coefs(pts: &[PointF]) -> Vec<f64> {
+    let mut z = [0.0; 9];
+    for p in pts.iter() {
+        let x = p.x;
+        let y = p.y;
+        let x2 = x * x;
+        z[0] += x2 * x2;
+        z[1] += x * x;
+        z[2] += 1.0;
+        z[3] += 2.0 * x2 * x;
+        z[4] += 2.0 * x2;
+        z[5] += 2.0 * x;
+        z[6] += -2.0 * y * x2;
+        z[7] += -2.0 * y * x;
+        z[8] += -2.0 * y;
+    }
+    let mut equations = vec![];
+    {
+        // f/da = 0
+        equations.push(vec![2.0 * z[0], z[3], z[4], z[6]]);
+        // f/db = 0
+        equations.push(vec![z[3], 2.0 * z[1], z[5], z[7]]);
+        // f/dc = 0
+        equations.push(vec![z[4], z[5], 2.0 * z[2], z[8]]);
+    }
+    let mut res = gauss(&mut equations);
+    res.reverse();
+    res
+}
+
+fn interpolate_with_polynomial_score(pts: &[PointF], debug: bool) -> (f64, Vec<PointF>) {
+    let first = pts[0];
+    let last = *pts.last().unwrap();
+    let dir = (last - first).norm();
+    let rev_dir = dir.rotate_ccw90();
+    let normalized = pts
+        .iter()
+        .map(|&p| PointF {
+            x: dir.scal_mul(&(p - first)),
+            y: rev_dir.scal_mul(&(p - first)),
+        })
+        .collect_vec();
+    // let mut coefs = vec![0.0; 3];
+
+    const OK_MIN_DIFF: f64 = 0.3;
+    const MULTIPLIER: f64 = 50.0;
+
+    let calc_score = |coefs: &[f64]| -> f64 {
+        normalized
+            .iter()
+            .map(|p| {
+                let poly_y = coefs[0] + coefs[1] * p.x + coefs[2] * p.x * p.x;
+                let diff_y = (poly_y - p.y).abs();
+                let diff_y = fmax(0.0, diff_y - OK_MIN_DIFF);
+                diff_y * diff_y
+            })
+            .sum::<f64>()
+            * MULTIPLIER
+            / normalized.len() as f64
+    };
+    // local_optimize(&mut coefs, calc_score, 1000);
+    // eprintln!("COEFS: {:?}", coefs);
+    let another_coefs = find_polynomial_coefs(&normalized);
+    // eprintln!("FOUND {:?}", another_coefs);
+    let coefs = another_coefs;
+    let debug_points = if !debug {
+        vec![]
+    } else {
+        normalized
+            .iter()
+            .map(|p| {
+                let poly_y = coefs[0] + coefs[1] * p.x + coefs[2] * p.x * p.x;
+                first + dir * p.x + rev_dir * poly_y
+            })
+            .collect_vec()
+    };
+    (calc_score(&coefs), debug_points)
+}
+
+pub fn match_side_borders_v2(lhs: &[PointF], rhs: &[PointF], debug: bool) -> (f64, Vec<PointF>) {
+    const REM_FIRST: usize = 2;
+    if lhs.len() <= REM_FIRST || rhs.len() <= REM_FIRST {
+        return (f64::MAX / 100.0, vec![]);
+    }
+    let lhs = &lhs[REM_FIRST..];
+    let rhs = &rhs[REM_FIRST..];
+
+    let sum_pts = lhs.iter().rev().chain(rhs.iter()).cloned().collect_vec();
+    interpolate_with_polynomial_score(&sum_pts, debug)
+}
+
 pub fn match_placed_borders(lhs: &BorderAndNeighbors, rhs: &BorderAndNeighbors) -> f64 {
     let center = match_placed_borders_center(&lhs.border, &rhs.border);
-    let prev = match_side_borders(&lhs.prev, &rhs.prev);
-    let next = match_side_borders(&lhs.next, &rhs.next);
-    center + (prev + next) * 7.0
+    let prev = match_side_borders_v2(&lhs.prev, &rhs.prev, false).0;
+    let next = match_side_borders_v2(&lhs.next, &rhs.next, false).0;
+    center + (prev + next)
 }
 
 #[derive(Clone)]
@@ -266,16 +399,33 @@ pub fn local_optimize_coordinate_systems(
     cs
 }
 
-fn is_picture_border_impl(pts: &[PointF]) -> bool {
-    let dir = *pts.last().unwrap() - pts[0];
-    let len = dir.len();
-    let dir = dir.norm();
-    let mut max_dist = 0.0;
-    for p in pts.iter() {
-        let dist = ((p.x - pts[0].x) * dir.y - dir.x * (p.y - pts[0].y)).abs();
-        max_dist = fmax(max_dist, dist);
+struct SocketDetector {
+    start: PointF,
+    dir: PointF,
+    len: f64,
+}
+
+impl SocketDetector {
+    pub fn new(pts: &[PointF]) -> Self {
+        let dir = *pts.last().unwrap() - pts[0];
+        let len = dir.len();
+        let dir = dir.norm();
+        Self {
+            dir,
+            len,
+            start: pts[0],
+        }
     }
-    max_dist < 0.1 * len
+
+    pub fn is_socket_point(&self, p: &PointF) -> bool {
+        ((p.x - self.start.x) * self.dir.y - self.dir.x * (p.y - self.start.y)).abs()
+            > 0.1 * self.len
+    }
+}
+
+fn is_picture_border_impl(pts: &[PointF]) -> bool {
+    let socket_detector = SocketDetector::new(pts);
+    !pts.iter().any(|p| socket_detector.is_socket_point(p))
 }
 
 pub fn is_picture_border(figure: &Figure, border_id: usize) -> bool {
@@ -289,6 +439,7 @@ fn get_figure_border_and_neighbors(figure: &Figure, border_id: usize) -> BorderA
         let sz = min(BorderAndNeighbors::NEIGHBORS, prev.len());
         prev.rotate_right(sz);
         prev.truncate(sz);
+        prev.reverse();
     }
     let mut next = get_figure_border(figure, (border_id + 1) % 4);
     next.truncate(BorderAndNeighbors::NEIGHBORS);

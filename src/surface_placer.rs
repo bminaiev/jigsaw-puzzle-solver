@@ -21,7 +21,7 @@ use crate::{
     placement::{Placement, PotentialLocation},
     point::{Point, PointF},
     rects_fitter::{get_bounding_box, RectsFitter},
-    utils::{fmax, fmin, Side},
+    utils::{dedup_edges, fmax, fmin, Side},
 };
 
 fn gen_basic_position(figure: &Figure) -> Vec<PointF> {
@@ -98,7 +98,7 @@ fn get_border(pos: &[PointF], parsed_puzzles: &ParsedPuzzles, side: Side) -> Vec
     res
 }
 
-fn get_border_and_neighbors(
+pub fn get_border_and_neighbors(
     pos: &[PointF],
     parsed_puzzles: &ParsedPuzzles,
     side: Side,
@@ -108,6 +108,7 @@ fn get_border_and_neighbors(
         let sz = min(BorderAndNeighbors::NEIGHBORS, prev.len());
         prev.rotate_right(sz);
         prev.truncate(sz);
+        prev.reverse();
     }
     let mut next = get_border(pos, parsed_puzzles, side.ne());
     next.truncate(BorderAndNeighbors::NEIGHBORS);
@@ -152,7 +153,6 @@ fn local_optimize_positions(
                 && positions[s2.fig].is_some()
                 && local_id_mapping.contains_key(&s1.fig)
                 && local_id_mapping.contains_key(&s2.fig)
-                && s1.fig < s2.fig
         })
         .collect_vec();
 
@@ -225,7 +225,12 @@ pub fn rotate_component(
     for &c in component.iter() {
         all_points.extend(&positions[c].as_ref().unwrap().clone());
     }
-    let probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
+    let mut probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
+    {
+        if !component.iter().any(|&c| probably_correct_dir[c]) {
+            probably_correct_dir[component[0]] = true;
+        }
+    }
     let calc_score = |angle: f64| -> f64 {
         let mut res = 0.0;
 
@@ -269,16 +274,15 @@ pub fn place_one_connected_component(
 ) -> f64 {
     let mut matched_borders = BTreeMap::new();
 
+    let used_edges = dedup_edges(used_edges);
+    let mut used_edges_two_sides = vec![];
     for &(s1, s2) in used_edges.iter() {
-        let match_res = match_borders(
-            &parsed_puzzles.figures[s1.fig],
-            s1.side,
-            &parsed_puzzles.figures[s2.fig],
-            s2.side,
-            s1.fig,
-            s2.fig,
-        )
-        .unwrap();
+        used_edges_two_sides.push((s1, s2));
+        used_edges_two_sides.push((s2, s1));
+    }
+
+    for &(s1, s2) in used_edges_two_sides.iter() {
+        let match_res = match_borders(parsed_puzzles, s1, s2).unwrap();
 
         matched_borders.insert((s1, s2), match_res);
     }
@@ -317,7 +321,7 @@ pub fn place_one_connected_component(
     loop {
         let mut changed = false;
 
-        for &(s1, s2) in used_edges.iter() {
+        for &(s1, s2) in used_edges_two_sides.iter() {
             if to_cs[s1.fig].is_some() && to_cs[s2.fig].is_none() {
                 changed = true;
 
@@ -344,7 +348,7 @@ pub fn place_one_connected_component(
                 new_x_dir[c] = PointF::ZERO;
                 cnt_edges[c] = 0;
             }
-            for &(s1, s2) in used_edges.iter() {
+            for &(s1, s2) in used_edges_two_sides.iter() {
                 let match_res = &matched_borders[&(s1, s2)];
 
                 let new_cs = predict_to_cs_based_on_edge(s1.fig, &to_cs, s2.fig, match_res);
@@ -375,7 +379,7 @@ pub fn place_one_connected_component(
         );
     }
 
-    local_optimize_positions(used_edges, positions, parsed_puzzles, component)
+    local_optimize_positions(&used_edges, positions, parsed_puzzles, component)
 }
 
 pub fn place_on_surface(
@@ -445,6 +449,11 @@ pub fn put_solutions_on_surface(solutions: &mut [PotentialSolution]) {
         let shift = rects_fitter.add_points(&new_pts);
         for fig in solutions[i].placed_figures.iter_mut() {
             for p in fig.positions.iter_mut() {
+                *p = *p + shift;
+            }
+        }
+        for line in solutions[i].debug_lines.iter_mut() {
+            for p in line.iter_mut() {
                 *p = *p + shift;
             }
         }
