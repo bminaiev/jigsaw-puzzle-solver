@@ -7,6 +7,7 @@ use crate::{
     border_matcher::{match_borders, match_side_borders_v2},
     borders_graph::Graph,
     graph_solver::{find_sides_by_known_edge, PlacedFigure, PotentialSolution},
+    known_positions::get_known_placement,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
     point::PointF,
@@ -14,49 +15,44 @@ use crate::{
     utils::{dedup_edges, Side},
 };
 
+#[derive(Default)]
+struct ScoringFunctionQuality {
+    sum_log: f64,
+    cnt: usize,
+}
+
+impl ScoringFunctionQuality {
+    pub fn add_score(&mut self, position: usize) {
+        assert!(position >= 1);
+        self.sum_log += (position as f64).log2();
+        self.cnt += 1;
+    }
+
+    pub fn get_quality(&self) -> f64 {
+        if self.cnt == 0 {
+            0.0
+        } else {
+            self.sum_log / (self.cnt as f64)
+        }
+    }
+}
+
 pub fn optimize_edge_scores(
     parsed_puzzles: &ParsedPuzzles,
     graph: &Graph,
     calc_new_scores: bool,
 ) -> Vec<PotentialSolution> {
-    let known_edges = vec![
-        (471, 974),
-        (417, 471),
-        (713, 974),
-        (871, 974),
-        (713, 756),
-        // (756, 436),<- TODO: fix correct edges
-        // (436, 815),
-        (999, 926),
-        (999, 574),
-        (926, 637),
-        (574, 963),
-        (439, 570),
-        (570, 548),
-        (926, 421),
-        (683, 421),
-    ];
-
     let dist = graph.gen_adj_matrix();
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
-    let mut known_sides = known_edges
-        .iter()
-        .map(|&(fig1, fig2)| find_sides_by_known_edge(fig1, fig2, dist))
-        .collect_vec();
-
-    known_sides.push((Side { fig: 756, side: 3 }, Side { fig: 436, side: 3 }));
-    known_sides.push((Side { fig: 815, side: 3 }, Side { fig: 436, side: 1 }));
-
-    let mut placement = Placement::new();
-    for &(s1, s2) in known_sides.iter() {
-        placement.join_sides(s1, s2).unwrap();
-    }
+    let placement = get_known_placement(graph);
     let known_sides = dedup_edges(&placement.get_all_neighbours());
 
     let all_sides: Vec<Side> = parsed_puzzles.gen_all_sides();
 
     let mut places = BTreeMap::new();
 
+    let mut existing_scoring_fun = ScoringFunctionQuality::default();
+    let mut new_scoring_fun = ScoringFunctionQuality::default();
     for &(s1, s2) in known_sides.iter() {
         let cur_dist = dist(s1, s2);
         for &stay_edge in [s1, s2].iter() {
@@ -66,6 +62,7 @@ pub fn optimize_edge_scores(
                 .count();
             let other_side = if stay_edge == s1 { s2 } else { s1 };
             places.insert((stay_edge, other_side), (better, None));
+            existing_scoring_fun.add_score(better);
             if calc_new_scores {
                 // eprintln!("Checking {:?} {:?}. Start dist: {cur_dist}", s1, s2);
                 // eprintln!("THIS IS FAIL.");
@@ -82,11 +79,17 @@ pub fn optimize_edge_scores(
                             <= new_my_score
                     })
                     .count();
+                new_scoring_fun.add_score(new_better);
                 eprintln!("({}, {}): {better} -> {new_better}", s1.fig, s2.fig);
                 places.insert((stay_edge, other_side), (better, Some(new_better)));
             }
         }
     }
+    eprintln!(
+        "Scoring functions quality: {} {}",
+        existing_scoring_fun.get_quality(),
+        new_scoring_fun.get_quality()
+    );
 
     let mut solutions = vec![];
 

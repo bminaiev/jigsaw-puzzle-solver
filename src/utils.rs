@@ -1,3 +1,5 @@
+use std::cmp::{max, min};
+
 use eframe::epaint::ColorImage;
 use image::ImageBuffer;
 use itertools::Itertools;
@@ -116,4 +118,8 @@ pub fn gauss(matrix: &mut [Vec<f64>]) -> Vec<f64> {
         res[i] = -matrix[i].last().unwrap();
     }
     res
+}
+
+pub fn normalize_bounding_box((x, y): (i32, i32)) -> (i32, i32) {
+    (min(x, y), max(x, y))
 }

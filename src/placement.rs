@@ -498,6 +498,10 @@ impl Placement {
         self.figures.iter().map(|f| f.figure_id).collect_vec()
     }
 
+    pub fn get_cnt_figures(&self) -> usize {
+        self.figures.len()
+    }
+
     pub fn remove_figure(&mut self, figure: usize) {
         for i in 0..self.figures.len() {
             if self.figures[i].figure_id == figure {
@@ -505,6 +509,15 @@ impl Placement {
                 return;
             }
         }
+    }
+
+    pub fn join_with(&mut self, another: &Self) -> bool {
+        for (s1, s2) in another.get_all_neighbours() {
+            if self.join_sides(s1, s2).is_none() {
+                return false;
+            }
+        }
+        true
     }
 }
 

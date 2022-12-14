@@ -18,7 +18,7 @@ use crate::{
     point::PointF,
     surface_placer::{place_one_connected_component, rotate_component},
     topn::TopN,
-    utils::{fmax, fmin, Side},
+    utils::{fmax, fmin, normalize_bounding_box, Side},
 };
 
 #[derive(Clone, Debug)]
@@ -616,10 +616,6 @@ pub fn solve_graph(
 
     // let placement = gen_placement(&last_state.unwrap());
     // graph.get_subgraph(&placement)
-}
-
-fn normalize_bounding_box((x, y): (i32, i32)) -> (i32, i32) {
-    (min(x, y), max(x, y))
 }
 
 fn is_bad_bounding_box((min, max): (i32, i32)) -> bool {

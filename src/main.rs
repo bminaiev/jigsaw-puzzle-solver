@@ -27,6 +27,7 @@ mod dsu;
 mod edge_score_optimizer;
 mod figure;
 mod graph_solver;
+mod known_positions;
 mod matcher_tests;
 mod my_widget;
 mod parsed_puzzles;
@@ -133,8 +134,8 @@ fn main_optimize_edge_scoring() {
 fn main() {
     // main_before_crop();
     // main_check_parsing();
-    // main_build_graph();
-    main_load_graph();
+    main_build_graph();
+    // main_load_graph();
     // main_optimize_edge_scoring();
 }
 

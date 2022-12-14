@@ -34,7 +34,7 @@ impl BorderAndNeighbors {
 pub fn match_placed_borders_center(lhs: &[PointF], rhs: &[PointF]) -> f64 {
     // TODO: smarter logic
 
-    const CHECK_NEXT: usize = 5;
+    const CHECK_NEXT: usize = 3;
     const OK_MIN_DIFF: f64 = 0.2;
     let score_one_side = |lhs: &[PointF], rhs: &[PointF]| -> f64 {
         let socket_detector = SocketDetector::new(lhs);
@@ -56,7 +56,7 @@ pub fn match_placed_borders_center(lhs: &[PointF], rhs: &[PointF]) -> f64 {
             let coef = if socket_detector.is_socket_point(p) {
                 1.0
             } else {
-                4.0
+                6.0
             };
 
             sum_dists += coef * fmax(0.0, dists[min_shift] - OK_MIN_DIFF);
@@ -185,8 +185,8 @@ fn interpolate_with_polynomial_score(pts: &[PointF], debug: bool) -> (f64, Vec<P
         .collect_vec();
     // let mut coefs = vec![0.0; 3];
 
-    const OK_MIN_DIFF: f64 = 0.3;
-    const MULTIPLIER: f64 = 50.0;
+    const OK_MIN_DIFF: f64 = 0.25;
+    const MULTIPLIER: f64 = 30.0;
 
     let calc_score = |coefs: &[f64]| -> f64 {
         normalized
