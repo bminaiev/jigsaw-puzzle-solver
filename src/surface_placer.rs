@@ -220,12 +220,16 @@ pub fn rotate_component(
     positions: &mut Vec<Option<Vec<PointF>>>,
     graph: &Graph,
     parsed_puzzles: &ParsedPuzzles,
+    base: &[usize],
 ) {
     let mut all_points: Vec<PointF> = vec![];
     for &c in component.iter() {
         all_points.extend(&positions[c].as_ref().unwrap().clone());
     }
     let mut probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
+    for &v in base.iter() {
+        probably_correct_dir[v] = true;
+    }
     {
         if !component.iter().any(|&c| probably_correct_dir[c]) {
             probably_correct_dir[component[0]] = true;
@@ -415,7 +419,7 @@ pub fn place_on_surface(
         place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions);
 
         eprintln!("Rotate component!");
-        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles);
+        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles, &[]);
 
         {
             let new_pts = cur_component

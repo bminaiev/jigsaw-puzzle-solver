@@ -397,6 +397,11 @@ impl Placement {
         res
     }
 
+    pub fn get_all_neighbours_in_same_component(&self, v: usize) -> Vec<(Side, Side)> {
+        let comp_id = self.get_comp_id(v);
+        self.gen_edges_between_comps(comp_id, comp_id)
+    }
+
     fn get_corner_by_side(p1: Pos, p2: Pos) -> (Pos, usize) {
         for i in 0..4 {
             let check_p1 = DEFAULT_POS[i];

@@ -9,7 +9,7 @@ use crate::{
     borders_graph::Graph,
     crop::crop,
     edge_score_optimizer::optimize_edge_scores,
-    graph_solver::{solve_graph, solve_graph_border, PotentialSolution},
+    graph_solver::{solve_graph, solve_graph_add_by_3, solve_graph_border, PotentialSolution},
     my_widget::MyWidget,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
@@ -89,8 +89,10 @@ fn main_load_graph() {
         } else {
             None
         };
-        solve_graph(&graph, &parsed_puzzles, prev_state.clone())
+        solve_graph_add_by_3(&graph, &parsed_puzzles, prev_state.clone())
     };
+    solution_graph.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));
+    solution_graph.truncate(25);
     // fs::write(
     //     GRAPH_SOLUTION_PATH,
     //     serde_json::to_string(&solution_graph).unwrap(),
@@ -134,8 +136,8 @@ fn main_optimize_edge_scoring() {
 fn main() {
     // main_before_crop();
     // main_check_parsing();
-    main_build_graph();
-    // main_load_graph();
+    // main_build_graph();
+    main_load_graph();
     // main_optimize_edge_scoring();
 }
 

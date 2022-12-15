@@ -103,7 +103,7 @@ pub fn optimize_edge_scores(
             &used_edges,
             &mut positions,
         );
-        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles);
+        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles, &[]);
 
         let mut placed_figures = vec![];
         for (figure_id, positions) in positions.iter().enumerate() {

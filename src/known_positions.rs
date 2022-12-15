@@ -60,11 +60,12 @@ pub fn get_known_placement(graph: &Graph) -> Placement {
     let dist = |s1: Side, s2: Side| dist[[s1.fig, s1.side, s2.fig, s2.side]];
     {
         let field = [
-            vec![969, 343, 637, 926, 999],
-            vec![676, 142, 683, 421, 574],
-            vec![-1, 215, 827, 424, 963],
-            vec![-1, -1, 882, 448, 995],
-            vec![-1, -1, 980, 508, 628],
+            vec![686, 717, 102, 365, 401, 969, 343, 637, 926, 999],
+            vec![648, 542, 1006, 577, 979, 676, 142, 683, 421, 574],
+            vec![-1, 1052, 620, 737, 832, 292, 215, 827, 424, 963],
+            vec![-1, -1, -1, -1, -1, -1, -1, 882, 448, 995],
+            vec![-1, -1, -1, -1, -1, -1, -1, 980, 508, 628],
+            vec![-1, -1, -1, -1, -1, -1, -1, -1, -1, 623],
         ];
         let placement = placement_by_field(&field, &dist);
         assert!(total_placement.join_with(&placement));
