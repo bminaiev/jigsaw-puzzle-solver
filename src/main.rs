@@ -10,6 +10,7 @@ use crate::{
     crop::crop,
     edge_score_optimizer::optimize_edge_scores,
     graph_solver::{solve_graph, solve_graph_add_by_3, solve_graph_border, PotentialSolution},
+    known_facts::KnownFacts,
     my_widget::MyWidget,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
@@ -27,6 +28,7 @@ mod dsu;
 mod edge_score_optimizer;
 mod figure;
 mod graph_solver;
+mod known_facts;
 mod known_positions;
 mod matcher_tests;
 mod my_widget;
@@ -54,6 +56,7 @@ fn main_ui(
     show_image: bool,
     show_matched_borders: bool,
     crop_enabled: bool,
+    known_facts: KnownFacts,
 ) {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(1400.0, 1100.0)),
@@ -66,6 +69,7 @@ fn main_ui(
         show_image,
         show_matched_borders,
         crop_enabled,
+        known_facts,
     ));
     eframe::run_native("jigsaw solver", options, Box::new(|_| app_created));
 }
@@ -83,16 +87,23 @@ fn main_load_graph() {
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     eprintln!("graph loaded! n = {}", graph.n);
 
+    let mut known_facts = KnownFacts::load();
+
     let mut solution_graph = {
         let mut prev_state: Option<Graph> = if LOAD_EXISTING_SOLUTION {
             Some(serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap())
         } else {
             None
         };
-        solve_graph_add_by_3(&graph, &parsed_puzzles, prev_state.clone())
+        solve_graph_add_by_3(
+            &graph,
+            &parsed_puzzles,
+            prev_state.clone(),
+            &mut known_facts,
+        )
     };
     solution_graph.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));
-    solution_graph.truncate(25);
+    solution_graph.truncate(20);
     // fs::write(
     //     GRAPH_SOLUTION_PATH,
     //     serde_json::to_string(&solution_graph).unwrap(),
@@ -102,15 +113,23 @@ fn main_load_graph() {
     // let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
     put_solutions_on_surface(&mut solution_graph);
     eprintln!("positions generated!");
-    main_ui(solution_graph, PATH, true, false, true, false);
+    main_ui(solution_graph, PATH, true, false, true, false, known_facts);
 }
 
 fn main_before_crop() {
-    main_ui(vec![], BEFORE_CROP_PATH, false, true, false, true);
+    main_ui(
+        vec![],
+        BEFORE_CROP_PATH,
+        false,
+        true,
+        false,
+        true,
+        KnownFacts::load(),
+    );
 }
 
 fn main_check_parsing() {
-    main_ui(vec![], PATH, true, true, true, false);
+    main_ui(vec![], PATH, true, true, true, false, KnownFacts::load());
 }
 
 fn main_check_crop() {
@@ -128,9 +147,17 @@ fn main_optimize_edge_scoring() {
     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     let parsed_puzzles = ParsedPuzzles::new(&color_image);
 
-    let mut solutions = optimize_edge_scores(&parsed_puzzles, &graph, true);
+    let mut solutions = optimize_edge_scores(&parsed_puzzles, &graph, false);
     put_solutions_on_surface(&mut solutions);
-    main_ui(solutions, PATH, true, false, true, false);
+    main_ui(
+        solutions,
+        PATH,
+        true,
+        false,
+        true,
+        false,
+        KnownFacts::load(),
+    );
 }
 
 fn main() {
@@ -153,6 +180,7 @@ impl MyApp {
         show_image: bool,
         show_matched_borders: bool,
         crop_enabled: bool,
+        known_facts: KnownFacts,
     ) -> Self {
         Self {
             my_widget: MyWidget::new(
@@ -162,6 +190,7 @@ impl MyApp {
                 show_image,
                 show_matched_borders,
                 crop_enabled,
+                known_facts,
             ),
         }
     }
@@ -170,6 +199,7 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            ctx.set_pixels_per_point(2.0);
             self.my_widget.ui(ui);
         });
     }

@@ -18,6 +18,7 @@ use crate::{
     dsu::Dsu,
     figure::Figure,
     graph_solver::PotentialSolution,
+    known_facts::{self, EdgeState, Fact, KnownFacts},
     parsed_puzzles::ParsedPuzzles,
     point::{Point, PointF},
     utils::{load_image_from_path, save_color_image, Side},
@@ -41,6 +42,9 @@ pub struct MyWidget {
     show_matched_borders: bool,
     piece_picker: String,
     crop_enabled: bool,
+    selected_solution: Option<usize>,
+    new_edges: Vec<EdgeState>,
+    known_facts: KnownFacts,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -64,6 +68,7 @@ impl MyWidget {
         show_image: bool,
         show_matched_borders: bool,
         crop_enabled: bool,
+        known_facts: KnownFacts,
     ) -> Self {
         let color_image = load_image_from_path(path).unwrap();
 
@@ -103,6 +108,9 @@ impl MyWidget {
             show_matched_borders,
             piece_picker: String::new(),
             crop_enabled,
+            selected_solution: None,
+            new_edges: vec![],
+            known_facts,
         }
     }
 
@@ -171,7 +179,7 @@ impl MyWidget {
                 .all_pts
                 .iter()
             {
-                if mouse.distance(self.convert_to_screen(p.pos2())) <= 25.0 {
+                if mouse.distance(self.convert_to_screen(p.pos2())) <= 12.0 {
                     return Some(closest_figure_id);
                 }
             }
@@ -184,10 +192,10 @@ impl MyWidget {
             let p1 = self.convert_to_screen(figure.border[i].pos2());
 
             let color = Color32::GREEN;
-            ui.painter().circle_filled(p1, 3.0, color);
+            ui.painter().circle_filled(p1, 1.5, color);
             let p2 = self.convert_to_screen(figure.border[(i + 1) % figure.border.len()].pos2());
             ui.painter()
-                .add(Shape::line_segment([p1, p2], Stroke::new(2.0, color)));
+                .add(Shape::line_segment([p1, p2], Stroke::new(1.0, color)));
         }
     }
 
@@ -272,6 +280,12 @@ impl MyWidget {
                 self.show_border(&self.parsed_puzzles.figures[id], ui);
             }
         }
+
+        if let Some(sol_id) = self.selected_solution {
+            for &new_fig in self.solutions[sol_id].new_figures_used.iter() {
+                self.show_border(&self.parsed_puzzles.figures[new_fig], ui);
+            }
+        }
     }
 
     fn show_best_matched_borders(&mut self, ui: &mut eframe::egui::Ui) {
@@ -279,7 +293,7 @@ impl MyWidget {
             return;
         }
 
-        let font_id = FontId::new(20.0, FontFamily::Monospace);
+        let font_id = FontId::new(10.0, FontFamily::Monospace);
         let x_offset = self.image.size()[0] as f32 + 100.0;
         const MAX_OPTIONS: usize = 20;
         const ONE_OPTION_SIZE: f32 = 250.0;
@@ -317,7 +331,7 @@ impl MyWidget {
                         let p2 = conv_point(*p2);
                         ui.painter().line_segment(
                             [self.convert_to_screen(p1), self.convert_to_screen(p2)],
-                            Stroke::new(2.0, color),
+                            Stroke::new(1.0, color),
                         );
                         ui.painter()
                             .circle_filled(self.convert_to_screen(p1), 3.0, color);
@@ -368,14 +382,14 @@ impl MyWidget {
                 .rect_filled(rect, Rounding::default(), Color32::WHITE);
         }
 
-        for sol in self.solutions.iter() {
+        for (sol_id, sol) in self.solutions.iter().enumerate() {
             for fig in sol.placed_figures.iter() {
                 let color = self.fig_colors[fig.figure_id];
                 for (p1, p2) in fig.positions.iter().circular_tuple_windows() {
                     let p1 = self.convert_to_screen(p1.pos2() + offset);
                     let p2 = self.convert_to_screen(p2.pos2() + offset);
 
-                    ui.painter().line_segment([p1, p2], Stroke::new(3.0, color))
+                    ui.painter().line_segment([p1, p2], Stroke::new(1.5, color))
                 }
 
                 for &pos in self.parsed_puzzles.figures[fig.figure_id]
@@ -383,7 +397,7 @@ impl MyWidget {
                     .iter()
                 {
                     let p = self.convert_to_screen(fig.positions[pos].pos2() + offset);
-                    ui.painter().add(Shape::circle_filled(p, 4.0, color));
+                    ui.painter().add(Shape::circle_filled(p, 2.0, color));
                 }
 
                 let center = self.convert_to_screen(calc_center(&fig.positions).pos2() + offset);
@@ -391,7 +405,7 @@ impl MyWidget {
                     center,
                     Align2::CENTER_CENTER,
                     fig.figure_id.to_string(),
-                    FontId::new(20.0, FontFamily::Monospace),
+                    FontId::new(10.0, FontFamily::Monospace),
                     Color32::BLACK,
                 );
             }
@@ -400,21 +414,84 @@ impl MyWidget {
                     let p1 = self.convert_to_screen(w[0].pos2() + offset);
                     let p2 = self.convert_to_screen(w[1].pos2() + offset);
                     ui.painter()
-                        .line_segment([p1, p2], Stroke::new(3.0, Color32::BLACK));
+                        .line_segment([p1, p2], Stroke::new(1.5, Color32::BLACK));
+                }
+            }
+            {
+                let p0 = self.convert_to_screen(sol.bbox.0.pos2() + offset);
+                let p1 = self.convert_to_screen(sol.bbox.1.pos2() + offset);
+                let is_mouse_inside = if let Some(mouse) = ui.input().pointer.hover_pos() {
+                    mouse.x >= p0.x && mouse.x <= p1.x && mouse.y >= p0.y && mouse.y <= p1.y
+                } else {
+                    false
+                };
+                if is_mouse_inside
+                    && ui.input().pointer.primary_clicked()
+                    && self.selected_solution != Some(sol_id)
+                {
+                    self.selected_solution = Some(sol_id);
+                    self.new_edges.clear();
+                    for &(s1, s2) in sol.new_edges_used.iter() {
+                        self.new_edges.push(self.known_facts.get_edge_state(s1, s2));
+                    }
+                }
+                let selected = self.selected_solution == Some(sol_id);
+                if is_mouse_inside || selected {
+                    let color = if selected {
+                        Color32::BLUE
+                    } else {
+                        Color32::BLACK
+                    };
+                    ui.painter().rect_stroke(
+                        Rect::from_min_max(p0, p1),
+                        Rounding::default(),
+                        Stroke::new(3.0, color),
+                    )
                 }
             }
             ui.painter().text(
                 self.convert_to_screen(sol.text_offset.pos2() + offset + vec2(10.0, 10.0)),
                 Align2::LEFT_TOP,
                 format!("{:.3}{}", sol.placement_score, sol.additional_text),
-                FontId::new(20.0, FontFamily::Monospace),
+                FontId::new(10.0, FontFamily::Monospace),
                 Color32::BLACK,
             );
         }
     }
 
-    pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+    fn show_elements(&mut self, ui: &mut eframe::egui::Ui) {
         ui.text_edit_singleline(&mut self.piece_picker);
+        if let Some(sol_id) = self.selected_solution {
+            for i in 0..self.new_edges.len() {
+                ui.horizontal(|ui| {
+                    let (s1, s2) = self.solutions[sol_id].new_edges_used[i];
+                    ui.label(format!("{} - {}", s1.fig, s2.fig));
+                    if ui
+                        .radio_value(&mut self.new_edges[i], EdgeState::Unknown, "Unknown")
+                        .clicked()
+                    {
+                        self.known_facts.remove_fact(&Fact::new(s1, s2, false));
+                        self.known_facts.remove_fact(&Fact::new(s1, s2, true));
+                    }
+                    if ui
+                        .radio_value(&mut self.new_edges[i], EdgeState::GoodEdge, "Good")
+                        .clicked()
+                    {
+                        self.known_facts.add_fact(&Fact::new(s1, s2, true));
+                    }
+                    if ui
+                        .radio_value(&mut self.new_edges[i], EdgeState::WrongEdge, "Wrong")
+                        .clicked()
+                    {
+                        self.known_facts.add_fact(&Fact::new(s1, s2, false));
+                    }
+                });
+            }
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+        self.show_elements(ui);
 
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
         {
@@ -466,7 +543,7 @@ impl MyWidget {
                 if figure.good_border {
                     for &pos in figure.corner_positions.iter() {
                         let p = self.convert_to_screen(figure.border[pos].pos2());
-                        ui.painter().add(Shape::circle_filled(p, 4.0, Color32::RED));
+                        ui.painter().add(Shape::circle_filled(p, 2.0, Color32::RED));
                     }
 
                     let center = self.convert_to_screen(figure.center.pos2());
@@ -475,7 +552,7 @@ impl MyWidget {
                         center,
                         Align2::CENTER_CENTER,
                         figure_id.to_string(),
-                        FontId::new(20.0, FontFamily::Monospace),
+                        FontId::new(10.0, FontFamily::Monospace),
                         color,
                     );
                 }

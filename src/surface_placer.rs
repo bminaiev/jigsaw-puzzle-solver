@@ -462,5 +462,6 @@ pub fn put_solutions_on_surface(solutions: &mut [PotentialSolution]) {
             }
         }
         solutions[i].text_offset = bbox.0 + shift;
+        solutions[i].bbox = (bbox.0 + shift, bbox.1 + shift)
     }
 }

@@ -3,6 +3,7 @@ use std::cmp::{max, min};
 use eframe::epaint::ColorImage;
 use image::ImageBuffer;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError> {
     let image = image::io::Reader::open(path)?.decode()?;
@@ -13,7 +14,7 @@ pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError>
 }
 
 // TODO: move to a separate file
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub struct Side {
     pub fig: usize,
     pub side: usize,

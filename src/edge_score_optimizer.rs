@@ -151,6 +151,9 @@ pub fn optimize_edge_scores(
             text_offset: PointF { x: 0.0, y: 0.0 },
             additional_text,
             debug_lines,
+            bbox: (PointF::ZERO, PointF::ZERO),
+            new_edges_used: vec![],
+            new_figures_used: vec![],
         });
     }
     solutions.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));

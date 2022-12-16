@@ -14,6 +14,7 @@ use crate::{
     border_matcher::is_picture_border,
     borders_graph::Graph,
     figure::BorderFigure,
+    known_facts::{self, Fact, KnownFacts},
     known_positions::get_known_placement,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
@@ -167,6 +168,9 @@ pub struct PotentialSolution {
     pub text_offset: PointF,
     pub additional_text: String,
     pub debug_lines: Vec<Vec<PointF>>,
+    pub bbox: (PointF, PointF),
+    pub new_figures_used: Vec<usize>,
+    pub new_edges_used: Vec<(Side, Side)>,
 }
 
 pub fn find_sides_by_known_edge(
@@ -519,6 +523,9 @@ pub fn solve_graph(
             text_offset: PointF { x: 0.0, y: 0.0 },
             additional_text: "".to_owned(),
             debug_lines: vec![],
+            bbox: (PointF::ZERO, PointF::ZERO),
+            new_edges_used: vec![],
+            new_figures_used: vec![],
         });
     }
     solutions.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));
@@ -861,10 +868,56 @@ impl Search3State {
     }
 }
 
+fn find_best_next(
+    state: &Search3State,
+    limit_inside: usize,
+    limit_res: usize,
+    to_check: &[Vec<Vec<Side>>],
+    used: &[bool],
+    dist: impl FnMut(Side, Side) -> f64 + Clone,
+) -> Vec<Search3StateWithScore> {
+    let to_check_down = |s: Side| -> &[Side] {
+        let res = &to_check[s.ne().fig][s.ne().side];
+        &res[..min(limit_inside, res.len())]
+    };
+
+    let mut next = vec![];
+    for s20u in to_check_down(state.s1[0]) {
+        let s20 = s20u.ne();
+        if used[s20.fig] {
+            continue;
+        }
+        for s21u in to_check_down(state.s1[1]) {
+            let s21 = s21u.ne();
+            if used[s21.fig] {
+                continue;
+            }
+            for s22u in to_check_down(state.s1[2]) {
+                let s22 = s22u.ne();
+                if used[s22.fig] {
+                    continue;
+                }
+                let potential_next_state = Search3State {
+                    s0: state.s1,
+                    s1: [s20, s21, s22],
+                };
+                let with_score = potential_next_state.with_score(dist.clone());
+                next.push(with_score);
+            }
+        }
+    }
+    next.sort();
+    next.truncate(limit_res);
+    next
+}
+
+const START_VERTEX: usize = 628;
+
 pub fn solve_graph_add_by_3(
     graph: &Graph,
     parsed_puzzles: &ParsedPuzzles,
     _prev_state: Option<Graph>,
+    known_facts: &mut KnownFacts,
 ) -> Vec<PotentialSolution> {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
@@ -874,7 +927,23 @@ pub fn solve_graph_add_by_3(
 
     let all_sides = parsed_puzzles.gen_all_sides();
 
-    let dist = gen_relative_dists(graph, parsed_puzzles);
+    let mut dist = gen_relative_dists(graph, parsed_puzzles);
+    for fact in known_facts.facts.iter() {
+        if !fact.good_edge {
+            dist[[
+                fact.side1.fig,
+                fact.side1.side,
+                fact.side2.fig,
+                fact.side2.side,
+            ]] = f64::MAX / 100000.0;
+            dist[[
+                fact.side2.fig,
+                fact.side2.side,
+                fact.side1.fig,
+                fact.side1.side,
+            ]] = f64::MAX / 100000.0;
+        }
+    }
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
     let mut possible_to_extend = vec![[false; 4]; n];
@@ -889,11 +958,20 @@ pub fn solve_graph_add_by_3(
 
     let possible_to_extend = |s: Side| possible_to_extend[s.fig][s.side];
 
-    const START_VERTEX: usize = 628;
     let mut states = vec![];
     let mut used = vec![false; graph.n];
+    let mut res = vec![];
     {
-        let placement = get_known_placement(graph);
+        // let placement = get_known_placement(graph);
+        // for (s1, s2) in placement.get_all_neighbours() {
+        //     known_facts.add_fact(&Fact::new(s1, s2, true));
+        // }
+        let mut placement = Placement::new();
+        for fact in known_facts.facts.iter() {
+            if fact.good_edge {
+                placement.join_sides(fact.side1, fact.side2).unwrap();
+            }
+        }
         for v in placement.get_all_used_figures() {
             used[v] = true;
         }
@@ -901,6 +979,14 @@ pub fn solve_graph_add_by_3(
             .get_all_neighbours_in_same_component(START_VERTEX)
             .into_iter()
             .collect();
+
+        res.push(gen_potential_solution(
+            &placement.get_all_neighbours_in_same_component(START_VERTEX),
+            parsed_puzzles,
+            graph,
+            Some(0.0),
+            known_facts,
+        ));
 
         // [s00, s01, s02]
         // [s10, s11, s12]
@@ -931,9 +1017,7 @@ pub fn solve_graph_add_by_3(
                                     s0: [s00, s01, s02],
                                     s1: [s10, s11, s12],
                                 };
-                                if search_state.all_vertices().contains(&START_VERTEX) {
-                                    states.push(search_state);
-                                }
+                                states.push(search_state);
                             }
                         }
                     }
@@ -943,9 +1027,7 @@ pub fn solve_graph_add_by_3(
         eprintln!("Start states: {}", states.len());
     }
 
-    assert_eq!(states.len(), 1);
-
-    const CHECK_BEST: usize = 300;
+    const CHECK_BEST: usize = 400;
     let mut to_check = calc_sorted_by_dist(parsed_puzzles, dist);
     for fig in 0..to_check.len() {
         for side in 0..4 {
@@ -953,86 +1035,96 @@ pub fn solve_graph_add_by_3(
         }
     }
 
-    let to_check_down = |s: Side| -> &[Side] { &to_check[s.ne().fig][s.ne().side] };
+    const LIMIT: usize = 400;
+    let mut next_states = vec![];
+    for st in states.iter() {
+        eprintln!("doing one state.");
+        let next = find_best_next(&st, 200, LIMIT, &to_check, &used, dist);
+        next_states.extend(next);
+    }
+    next_states.sort();
+    next_states.truncate(LIMIT);
 
-    // TODO: do not use already used vertices
-    {
-        let st = states[0].clone();
+    let more_res: Vec<_> = next_states
+        .par_iter()
+        .map(|state| {
+            let used_edges = state.state.all_edges();
+            gen_potential_solution(&used_edges, parsed_puzzles, graph, None, known_facts)
+        })
+        .collect();
+    res.extend(more_res);
+    res
+}
 
-        let mut next = vec![];
-        for s20u in to_check_down(st.s1[0]) {
-            let s20 = s20u.ne();
-            if used[s20.fig] {
-                continue;
-            }
-            for s21u in to_check_down(st.s1[1]) {
-                let s21 = s21u.ne();
-                if used[s21.fig] {
-                    continue;
-                }
-                for s22u in to_check_down(st.s1[2]) {
-                    let s22 = s22u.ne();
-                    if used[s22.fig] {
-                        continue;
-                    }
-                    let potential_next_state = Search3State {
-                        s0: st.s1,
-                        s1: [s20, s21, s22],
-                    };
-                    let with_score = potential_next_state.with_score(dist);
-                    next.push(with_score);
-                }
-            }
-        }
-        next.sort();
-        eprintln!("Total next states: {}", next.len());
-        next.truncate(200);
-        {
-            states.clear();
-            for st in next.into_iter() {
-                states.push(st.state);
-            }
+fn gen_potential_solution(
+    edges: &[(Side, Side)],
+    parsed_puzzles: &ParsedPuzzles,
+    graph: &Graph,
+    set_fixed_score: Option<f64>,
+    known_facts: &KnownFacts,
+) -> PotentialSolution {
+    let mut cur_component = edges
+        .iter()
+        .map(|(s1, s2)| [s1.fig, s2.fig])
+        .flatten()
+        .collect_vec();
+    cur_component.sort();
+    cur_component.dedup();
+
+    let mut positions = vec![None; parsed_puzzles.figures.len()];
+    let placement_score =
+        place_one_connected_component(parsed_puzzles, &cur_component, edges, &mut positions);
+    eprintln!("placed score: {placement_score}");
+    rotate_component(
+        &cur_component,
+        &mut positions,
+        graph,
+        parsed_puzzles,
+        &[START_VERTEX],
+    );
+
+    let mut placed_figures = vec![];
+    for (figure_id, positions) in positions.iter().enumerate() {
+        if let Some(positions) = positions {
+            placed_figures.push(PlacedFigure {
+                figure_id,
+                positions: positions.clone(),
+            });
         }
     }
 
-    states
-        .par_iter()
-        .map(|state| {
-            let used_edges = state.all_edges();
-            let cur_component = state.all_vertices();
-            let mut positions = vec![None; n];
-            let placement_score = place_one_connected_component(
-                parsed_puzzles,
-                &cur_component,
-                &used_edges,
-                &mut positions,
-            );
-            eprintln!("placed score: {placement_score}");
-            rotate_component(
-                &cur_component,
-                &mut positions,
-                graph,
-                parsed_puzzles,
-                &[START_VERTEX],
-            );
-
-            let mut placed_figures = vec![];
-            for (figure_id, positions) in positions.iter().enumerate() {
-                if let Some(positions) = positions {
-                    placed_figures.push(PlacedFigure {
-                        figure_id,
-                        positions: positions.clone(),
-                    });
-                }
-            }
-
-            PotentialSolution {
-                placed_figures,
-                placement_score,
-                text_offset: PointF { x: 0.0, y: 0.0 },
-                additional_text: "".to_owned(),
-                debug_lines: vec![],
-            }
+    let placed_vertices = known_facts.get_all_placed_vertices();
+    let new_figures_used = cur_component
+        .iter()
+        .filter(|x| !placed_vertices.contains(x))
+        .cloned()
+        .collect_vec();
+    let new_edges_used = edges
+        .iter()
+        .filter(|&&(s1, s2)| {
+            let known = known_facts.facts.contains(&Fact::new(s1, s2, true));
+            let from_old = placed_vertices.contains(&s1.fig) != placed_vertices.contains(&s2.fig);
+            !known && from_old
         })
-        .collect()
+        .cloned()
+        .collect_vec();
+
+    PotentialSolution {
+        placed_figures,
+        placement_score: set_fixed_score.unwrap_or(placement_score),
+        text_offset: PointF { x: 0.0, y: 0.0 },
+        additional_text: "".to_owned(),
+        debug_lines: vec![],
+        bbox: (PointF::ZERO, PointF::ZERO),
+        new_figures_used,
+        new_edges_used,
+    }
+}
+
+fn calc_real_score(state: &Search3State, parsed_puzzles: &ParsedPuzzles) -> f64 {
+    let used_edges = state.all_edges();
+    let cur_component = state.all_vertices();
+    let mut positions = vec![None; parsed_puzzles.figures.len()];
+
+    place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions)
 }
