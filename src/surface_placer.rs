@@ -221,6 +221,7 @@ pub fn rotate_component(
     graph: &Graph,
     parsed_puzzles: &ParsedPuzzles,
     base: &[usize],
+    rot_positions: &[Option<Vec<PointF>>],
 ) {
     let mut all_points: Vec<PointF> = vec![];
     for &c in component.iter() {
@@ -229,6 +230,11 @@ pub fn rotate_component(
     let mut probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
     for &v in base.iter() {
         probably_correct_dir[v] = true;
+    }
+    for i in 0..rot_positions.len() {
+        if rot_positions[i].is_some() {
+            probably_correct_dir[i] = true;
+        }
     }
     {
         if !component.iter().any(|&c| probably_correct_dir[c]) {
@@ -243,8 +249,14 @@ pub fn rotate_component(
                 continue;
             }
             let (p1, p2) = parsed_puzzles.figures[c].get_cs_points();
-            let (p1, p2) = (p1.conv_f64(), p2.conv_f64());
+            let (mut p1, mut p2) = (p1.conv_f64(), p2.conv_f64());
             let (i1, i2) = parsed_puzzles.figures[c].get_cs_points_indexes();
+
+            if rot_positions.len() > c && rot_positions[c].is_some() {
+                p1 = rot_positions[c].as_ref().unwrap()[i1];
+                p2 = rot_positions[c].as_ref().unwrap()[i2];
+            }
+
             let p3 = positions[c].as_ref().unwrap()[i1].rotate(angle);
             let p4 = positions[c].as_ref().unwrap()[i2].rotate(angle);
             let dir1 = (p2 - p1).norm();
@@ -419,7 +431,14 @@ pub fn place_on_surface(
         place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions);
 
         eprintln!("Rotate component!");
-        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles, &[]);
+        rotate_component(
+            &cur_component,
+            &mut positions,
+            graph,
+            parsed_puzzles,
+            &[],
+            &[],
+        );
 
         {
             let new_pts = cur_component

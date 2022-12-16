@@ -505,7 +505,14 @@ pub fn solve_graph(
             &mut positions,
         );
         eprintln!("placed score: {placement_score}");
-        rotate_component(&cur_component, &mut positions, graph, parsed_puzzles, &[]);
+        rotate_component(
+            &cur_component,
+            &mut positions,
+            graph,
+            parsed_puzzles,
+            &[],
+            &[],
+        );
 
         let mut placed_figures = vec![];
         for (figure_id, positions) in positions.iter().enumerate() {
@@ -875,26 +882,33 @@ fn find_best_next(
     to_check: &[Vec<Vec<Side>>],
     used: &[bool],
     dist: impl FnMut(Side, Side) -> f64 + Clone,
+    start_edges: &BTreeMap<Side, Side>,
 ) -> Vec<Search3StateWithScore> {
     let to_check_down = |s: Side| -> &[Side] {
         let res = &to_check[s.ne().fig][s.ne().side];
         &res[..min(limit_inside, res.len())]
     };
 
+    let start = [
+        start_edges.get(&state.s1[0].ne()),
+        start_edges.get(&state.s1[1].ne()),
+        start_edges.get(&state.s1[2].ne()),
+    ];
+
     let mut next = vec![];
     for s20u in to_check_down(state.s1[0]) {
         let s20 = s20u.ne();
-        if used[s20.fig] {
+        if used[s20.fig] && Some(s20u) != start[0] {
             continue;
         }
         for s21u in to_check_down(state.s1[1]) {
             let s21 = s21u.ne();
-            if used[s21.fig] {
+            if used[s21.fig] && Some(s21u) != start[1] {
                 continue;
             }
             for s22u in to_check_down(state.s1[2]) {
                 let s22 = s22u.ne();
-                if used[s22.fig] {
+                if used[s22.fig] && Some(s22u) != start[2] {
                     continue;
                 }
                 let potential_next_state = Search3State {
@@ -925,9 +939,22 @@ pub fn solve_graph_add_by_3(
     let n = graph.n;
     eprintln!("nd array created!");
 
+    let mut on_border = vec![false; n];
+    for v in 0..n {
+        if !parsed_puzzles.figures[v].is_good_puzzle() {
+            continue;
+        }
+        for side in 0..4 {
+            if is_picture_border(&parsed_puzzles.figures[v], side) {
+                on_border[v] = true;
+            }
+        }
+    }
+
     let all_sides = parsed_puzzles.gen_all_sides();
 
     let mut dist = gen_relative_dists(graph, parsed_puzzles);
+    const MX: f64 = f64::MAX / 100000.0;
     for fact in known_facts.facts.iter() {
         if !fact.good_edge {
             dist[[
@@ -935,15 +962,33 @@ pub fn solve_graph_add_by_3(
                 fact.side1.side,
                 fact.side2.fig,
                 fact.side2.side,
-            ]] = f64::MAX / 100000.0;
+            ]] = MX;
             dist[[
                 fact.side2.fig,
                 fact.side2.side,
                 fact.side1.fig,
                 fact.side1.side,
-            ]] = f64::MAX / 100000.0;
+            ]] = MX;
         }
     }
+    let mut start_placement = Placement::new();
+    for fact in known_facts.facts.iter() {
+        if fact.good_edge {
+            start_placement.join_sides(fact.side1, fact.side2).unwrap();
+        }
+    }
+    for (s1, s2) in start_placement.get_all_neighbours() {
+        for &s3 in all_sides.iter() {
+            if s2 != s3 {
+                dist[[s1.fig, s1.side, s3.fig, s3.side]] = MX;
+            }
+        }
+    }
+    let start_edges: BTreeMap<Side, Side> = start_placement
+        .get_all_neighbours_in_same_component(START_VERTEX)
+        .into_iter()
+        .collect();
+
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
 
     let mut possible_to_extend = vec![[false; 4]; n];
@@ -957,6 +1002,8 @@ pub fn solve_graph_add_by_3(
     }
 
     let possible_to_extend = |s: Side| possible_to_extend[s.fig][s.side];
+
+    let mut rot_positions = vec![];
 
     let mut states = vec![];
     let mut used = vec![false; graph.n];
@@ -975,17 +1022,17 @@ pub fn solve_graph_add_by_3(
         for v in placement.get_all_used_figures() {
             used[v] = true;
         }
-        let start_edges: BTreeMap<Side, Side> = placement
-            .get_all_neighbours_in_same_component(START_VERTEX)
-            .into_iter()
-            .collect();
+
+        let edges = placement.get_all_neighbours_in_same_component(START_VERTEX);
+        rot_positions = get_correct_rotation_positions(&edges, parsed_puzzles, graph);
 
         res.push(gen_potential_solution(
-            &placement.get_all_neighbours_in_same_component(START_VERTEX),
+            &edges,
             parsed_puzzles,
             graph,
             Some(0.0),
             known_facts,
+            &rot_positions,
         ));
 
         // [s00, s01, s02]
@@ -1006,18 +1053,28 @@ pub fn solve_graph_add_by_3(
                         let s11 = s11l.ne2();
                         if let Some(s12l) = start_edges.get(&s11) {
                             let s12 = s12l.ne2();
-                            if !start_edges.contains_key(&s10.ne())
-                                && !start_edges.contains_key(&s11.ne())
-                                && !start_edges.contains_key(&s12.ne())
+                            let mut cnt_exist = 0;
+                            if start_edges.contains_key(&s10.ne()) {
+                                cnt_exist += 1;
+                            }
+                            if start_edges.contains_key(&s11.ne()) {
+                                cnt_exist += 1;
+                            }
+                            if start_edges.contains_key(&s12.ne()) {
+                                cnt_exist += 1;
+                            }
+                            if cnt_exist < 3
                                 && possible_to_extend(s10.ne())
                                 && possible_to_extend(s11.ne())
                                 && possible_to_extend(s12.ne())
                             {
-                                let search_state = Search3State {
-                                    s0: [s00, s01, s02],
-                                    s1: [s10, s11, s12],
-                                };
-                                states.push(search_state);
+                                if on_border[s10.fig] || on_border[s12.fig] {
+                                    let search_state = Search3State {
+                                        s0: [s00, s01, s02],
+                                        s1: [s10, s11, s12],
+                                    };
+                                    states.push(search_state);
+                                }
                             }
                         }
                     }
@@ -1035,11 +1092,15 @@ pub fn solve_graph_add_by_3(
         }
     }
 
+    for i in 0..4 {
+        eprintln!("??? {}", to_check[547][i].len());
+    }
+
     const LIMIT: usize = 400;
     let mut next_states = vec![];
     for st in states.iter() {
         eprintln!("doing one state.");
-        let next = find_best_next(&st, 200, LIMIT, &to_check, &used, dist);
+        let next = find_best_next(&st, 400, LIMIT, &to_check, &used, dist, &start_edges);
         next_states.extend(next);
     }
     next_states.sort();
@@ -1049,20 +1110,25 @@ pub fn solve_graph_add_by_3(
         .par_iter()
         .map(|state| {
             let used_edges = state.state.all_edges();
-            gen_potential_solution(&used_edges, parsed_puzzles, graph, None, known_facts)
+            gen_potential_solution(
+                &used_edges,
+                parsed_puzzles,
+                graph,
+                None,
+                known_facts,
+                &rot_positions,
+            )
         })
         .collect();
     res.extend(more_res);
     res
 }
 
-fn gen_potential_solution(
+fn get_correct_rotation_positions(
     edges: &[(Side, Side)],
     parsed_puzzles: &ParsedPuzzles,
     graph: &Graph,
-    set_fixed_score: Option<f64>,
-    known_facts: &KnownFacts,
-) -> PotentialSolution {
+) -> Vec<Option<Vec<PointF>>> {
     let mut cur_component = edges
         .iter()
         .map(|(s1, s2)| [s1.fig, s2.fig])
@@ -1081,6 +1147,38 @@ fn gen_potential_solution(
         graph,
         parsed_puzzles,
         &[START_VERTEX],
+        &[],
+    );
+    positions
+}
+
+fn gen_potential_solution(
+    edges: &[(Side, Side)],
+    parsed_puzzles: &ParsedPuzzles,
+    graph: &Graph,
+    set_fixed_score: Option<f64>,
+    known_facts: &KnownFacts,
+    rot_positions: &[Option<Vec<PointF>>],
+) -> PotentialSolution {
+    let mut cur_component = edges
+        .iter()
+        .map(|(s1, s2)| [s1.fig, s2.fig])
+        .flatten()
+        .collect_vec();
+    cur_component.sort();
+    cur_component.dedup();
+
+    let mut positions = vec![None; parsed_puzzles.figures.len()];
+    let placement_score =
+        place_one_connected_component(parsed_puzzles, &cur_component, edges, &mut positions);
+    eprintln!("placed score: {placement_score}");
+    rotate_component(
+        &cur_component,
+        &mut positions,
+        graph,
+        parsed_puzzles,
+        &[],
+        rot_positions,
     );
 
     let mut placed_figures = vec![];
