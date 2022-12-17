@@ -541,9 +541,11 @@ impl MyWidget {
         if self.show_parsed {
             for (figure_id, figure) in self.parsed_puzzles.figures.iter().enumerate() {
                 if figure.good_border {
-                    for &pos in figure.corner_positions.iter() {
-                        let p = self.convert_to_screen(figure.border[pos].pos2());
-                        ui.painter().add(Shape::circle_filled(p, 2.0, Color32::RED));
+                    if false {
+                        for &pos in figure.corner_positions.iter() {
+                            let p = self.convert_to_screen(figure.border[pos].pos2());
+                            ui.painter().add(Shape::circle_filled(p, 2.0, Color32::RED));
+                        }
                     }
 
                     let center = self.convert_to_screen(figure.center.pos2());

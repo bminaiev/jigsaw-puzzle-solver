@@ -19,6 +19,7 @@ use crate::{
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
     point::PointF,
+    positions_cache::PositionsCache,
     surface_placer::{place_one_connected_component, rotate_component},
     topn::TopN,
     utils::{fmax, fmin, normalize_bounding_box, Side},
@@ -211,6 +212,8 @@ pub fn solve_graph(
     let n = graph.n;
     let base_dist = graph.gen_adj_matrix();
     eprintln!("nd array created!");
+
+    let base_points_matrix = graph.get_base_points_matrix();
 
     let all_sides = (0..n)
         .cartesian_product(0..4)
@@ -503,7 +506,9 @@ pub fn solve_graph(
             &cur_component,
             &used_edges,
             &mut positions,
-        );
+            &base_points_matrix,
+        )
+        .unwrap_or(f64::MAX);
         eprintln!("placed score: {placement_score}");
         rotate_component(
             &cur_component,
@@ -932,12 +937,14 @@ pub fn solve_graph_add_by_3(
     parsed_puzzles: &ParsedPuzzles,
     _prev_state: Option<Graph>,
     known_facts: &mut KnownFacts,
+    positions_cache: &PositionsCache,
 ) -> Vec<PotentialSolution> {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
     eprintln!("Hello there!");
     let n = graph.n;
     eprintln!("nd array created!");
+    let base_points_matrix = graph.get_base_points_matrix();
 
     let mut on_border = vec![false; n];
     for v in 0..n {
@@ -1003,7 +1010,7 @@ pub fn solve_graph_add_by_3(
 
     let possible_to_extend = |s: Side| possible_to_extend[s.fig][s.side];
 
-    let mut rot_positions = vec![];
+    let rot_positions;
 
     let mut states = vec![];
     let mut used = vec![false; graph.n];
@@ -1024,16 +1031,27 @@ pub fn solve_graph_add_by_3(
         }
 
         let edges = placement.get_all_neighbours_in_same_component(START_VERTEX);
-        rot_positions = get_correct_rotation_positions(&edges, parsed_puzzles, graph);
-
-        res.push(gen_potential_solution(
+        rot_positions = get_correct_rotation_positions(
             &edges,
             parsed_puzzles,
             graph,
-            Some(0.0),
-            known_facts,
-            &rot_positions,
-        ));
+            positions_cache,
+            &base_points_matrix,
+        );
+
+        res.push(
+            gen_potential_solution(
+                &edges,
+                parsed_puzzles,
+                graph,
+                Some(0.0),
+                known_facts,
+                &rot_positions,
+                positions_cache,
+                &base_points_matrix,
+            )
+            .unwrap(),
+        );
 
         // [s00, s01, s02]
         // [s10, s11, s12]
@@ -1068,7 +1086,7 @@ pub fn solve_graph_add_by_3(
                                 && possible_to_extend(s11.ne())
                                 && possible_to_extend(s12.ne())
                             {
-                                if on_border[s10.fig] || on_border[s12.fig] {
+                                if on_border[s10.fig] || on_border[s12.fig] || cnt_exist != 3 {
                                     let search_state = Search3State {
                                         s0: [s00, s01, s02],
                                         s1: [s10, s11, s12],
@@ -1084,43 +1102,58 @@ pub fn solve_graph_add_by_3(
         eprintln!("Start states: {}", states.len());
     }
 
-    const CHECK_BEST: usize = 400;
+    const CHECK_BEST: usize = 500;
     let mut to_check = calc_sorted_by_dist(parsed_puzzles, dist);
     for fig in 0..to_check.len() {
         for side in 0..4 {
             to_check[fig][side].truncate(CHECK_BEST);
+            while let Some(s2) = to_check[fig][side].last() {
+                if dist(Side { fig, side }, *s2) > TOO_BIG_COST {
+                    to_check[fig][side].pop();
+                } else {
+                    break;
+                }
+            }
         }
     }
 
-    for i in 0..4 {
-        eprintln!("??? {}", to_check[547][i].len());
-    }
-
-    const LIMIT: usize = 400;
+    const LIMIT: usize = 4;
     let mut next_states = vec![];
     for st in states.iter() {
         eprintln!("doing one state.");
-        let next = find_best_next(&st, 400, LIMIT, &to_check, &used, dist, &start_edges);
+        let next = find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist, &start_edges);
         next_states.extend(next);
     }
     next_states.sort();
-    next_states.truncate(LIMIT);
+    // next_states.truncate(LIMIT);
 
-    let more_res: Vec<_> = next_states
+    let mut more_res: Vec<_> = next_states
         .par_iter()
-        .map(|state| {
+        .filter_map(|state| {
             let used_edges = state.state.all_edges();
-            gen_potential_solution(
-                &used_edges,
-                parsed_puzzles,
-                graph,
-                None,
-                known_facts,
-                &rot_positions,
-            )
+            Some((
+                state.state.s0.clone(),
+                gen_potential_solution(
+                    &used_edges,
+                    parsed_puzzles,
+                    graph,
+                    None,
+                    known_facts,
+                    &rot_positions,
+                    positions_cache,
+                    &base_points_matrix,
+                )?,
+            ))
         })
         .collect();
-    res.extend(more_res);
+    eprintln!("BEFORE SORTING.");
+    more_res.sort_by(|(a, b), (c, d)| b.placement_score.total_cmp(&d.placement_score));
+    let mut seen = BTreeSet::new();
+    for (state, r) in more_res.into_iter() {
+        if seen.insert(state) {
+            res.push(r);
+        }
+    }
     res
 }
 
@@ -1128,6 +1161,8 @@ fn get_correct_rotation_positions(
     edges: &[(Side, Side)],
     parsed_puzzles: &ParsedPuzzles,
     graph: &Graph,
+    positions_cache: &PositionsCache,
+    base_points_matrix: &Array4<[PointF; 2]>,
 ) -> Vec<Option<Vec<PointF>>> {
     let mut cur_component = edges
         .iter()
@@ -1138,8 +1173,15 @@ fn get_correct_rotation_positions(
     cur_component.dedup();
 
     let mut positions = vec![None; parsed_puzzles.figures.len()];
-    let placement_score =
-        place_one_connected_component(parsed_puzzles, &cur_component, edges, &mut positions);
+    let placement_score = positions_cache
+        .place_one_connected_component_with_cache(
+            parsed_puzzles,
+            &cur_component,
+            edges,
+            &mut positions,
+            base_points_matrix,
+        )
+        .unwrap_or(f64::MAX);
     eprintln!("placed score: {placement_score}");
     rotate_component(
         &cur_component,
@@ -1159,7 +1201,9 @@ fn gen_potential_solution(
     set_fixed_score: Option<f64>,
     known_facts: &KnownFacts,
     rot_positions: &[Option<Vec<PointF>>],
-) -> PotentialSolution {
+    positions_cache: &PositionsCache,
+    base_points_matrix: &Array4<[PointF; 2]>,
+) -> Option<PotentialSolution> {
     let mut cur_component = edges
         .iter()
         .map(|(s1, s2)| [s1.fig, s2.fig])
@@ -1169,8 +1213,13 @@ fn gen_potential_solution(
     cur_component.dedup();
 
     let mut positions = vec![None; parsed_puzzles.figures.len()];
-    let placement_score =
-        place_one_connected_component(parsed_puzzles, &cur_component, edges, &mut positions);
+    let placement_score = positions_cache.place_one_connected_component_with_cache(
+        parsed_puzzles,
+        &cur_component,
+        edges,
+        &mut positions,
+        base_points_matrix,
+    )?;
     eprintln!("placed score: {placement_score}");
     rotate_component(
         &cur_component,
@@ -1207,7 +1256,7 @@ fn gen_potential_solution(
         .cloned()
         .collect_vec();
 
-    PotentialSolution {
+    Some(PotentialSolution {
         placed_figures,
         placement_score: set_fixed_score.unwrap_or(placement_score),
         text_offset: PointF { x: 0.0, y: 0.0 },
@@ -1216,13 +1265,24 @@ fn gen_potential_solution(
         bbox: (PointF::ZERO, PointF::ZERO),
         new_figures_used,
         new_edges_used,
-    }
+    })
 }
 
-fn calc_real_score(state: &Search3State, parsed_puzzles: &ParsedPuzzles) -> f64 {
+fn calc_real_score(
+    state: &Search3State,
+    parsed_puzzles: &ParsedPuzzles,
+    base_points_matrix: &Array4<[PointF; 2]>,
+) -> f64 {
     let used_edges = state.all_edges();
     let cur_component = state.all_vertices();
     let mut positions = vec![None; parsed_puzzles.figures.len()];
 
-    place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions)
+    place_one_connected_component(
+        parsed_puzzles,
+        &cur_component,
+        &used_edges,
+        &mut positions,
+        base_points_matrix,
+    )
+    .unwrap_or(f64::MAX)
 }

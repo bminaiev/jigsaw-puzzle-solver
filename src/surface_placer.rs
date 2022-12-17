@@ -6,6 +6,7 @@ use std::{
 
 use eframe::egui::plot::Corner;
 use itertools::Itertools;
+use ndarray::Array4;
 
 use crate::{
     border_matcher::{
@@ -88,13 +89,11 @@ fn get_border(pos: &[PointF], parsed_puzzles: &ParsedPuzzles, side: Side) -> Vec
     let mut cur = figure.corner_positions[side.side];
     let end = figure.corner_positions[(side.side + 1) % figure.corner_positions.len()];
     let mut res = vec![];
-    loop {
-        res.push(pos[cur]);
-        if cur == end {
-            break;
-        }
-        cur = (cur + 1) % pos.len();
+    if end < cur {
+        res.extend(pos[cur..].iter().cloned());
+        cur = 0;
     }
+    res.extend(pos[cur..=end].iter().cloned());
     res
 }
 
@@ -158,7 +157,8 @@ fn local_optimize_positions(
 
     let mut final_score = 0.0;
 
-    for glob_iter in 0..1 {
+    let very_big = cur_component.len() > 10;
+    for glob_iter in 0..(if very_big { 1 } else { 1 }) {
         let move_cs = cur_component
             .iter()
             .map(|&v| MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap()))
@@ -287,8 +287,11 @@ pub fn place_one_connected_component(
     component: &[usize],
     used_edges: &[(Side, Side)],
     positions: &mut Vec<Option<Vec<PointF>>>,
-) -> f64 {
-    let mut matched_borders = BTreeMap::new();
+    base_points_matrix: &Array4<[PointF; 2]>,
+) -> Option<f64> {
+    // let mut matched_borders = BTreeMap::new();
+
+    let very_big = component.len() > 10;
 
     let used_edges = dedup_edges(used_edges);
     let mut used_edges_two_sides = vec![];
@@ -298,21 +301,36 @@ pub fn place_one_connected_component(
     }
 
     for &(s1, s2) in used_edges_two_sides.iter() {
-        let match_res = match_borders(parsed_puzzles, s1, s2).unwrap();
-
-        matched_borders.insert((s1, s2), match_res);
+        let bp = base_points_matrix[[s1.fig, s1.side, s2.fig, s2.side]];
+        if bp[0] == bp[1] {
+            assert!(bp[0] == PointF::ZERO);
+            return None;
+        }
     }
-
-    let root = component[0];
-    positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
 
     let from_cs = parsed_puzzles
         .figures
         .iter()
         .map(|f| from_cs_from_figure(f))
         .collect_vec();
+
+    let mut some_placed = false;
     let mut to_cs = vec![None; positions.len()];
-    to_cs[root] = Some(from_cs[root].clone());
+    for &fig in component.iter() {
+        if positions[fig].is_none() {
+            continue;
+        }
+        let (i1, i2) = parsed_puzzles.figures[fig].get_cs_points_indexes();
+        let p1_placed = positions[fig].as_ref().unwrap()[i1];
+        let p2_placed = positions[fig].as_ref().unwrap()[i2];
+        to_cs[fig] = Some(CoordinateSystem::new(p1_placed, p2_placed - p1_placed));
+        some_placed = true;
+    }
+    if !some_placed {
+        let root = component[0];
+        positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
+        to_cs[root] = Some(from_cs[root].clone());
+    }
 
     let predict_point_based_on_edge =
         |from_v: usize, to_cs: &[Option<CoordinateSystem>], p: PointF| {
@@ -327,10 +345,10 @@ pub fn place_one_connected_component(
         |from_v: usize,
          to_cs: &[Option<CoordinateSystem>],
          to_v: usize,
-         match_result: &MatchResult| {
-            let (i1, i2) = parsed_puzzles.figures[to_v].get_cs_points_indexes();
-            let p1_placed = predict_point_based_on_edge(from_v, to_cs, match_result.rhs[i1]);
-            let p2_placed = predict_point_based_on_edge(from_v, to_cs, match_result.rhs[i2]);
+         base_points: &[PointF; 2]| {
+            // let (i1, i2) = parsed_puzzles.figures[to_v].get_cs_points_indexes();
+            let p1_placed = predict_point_based_on_edge(from_v, to_cs, base_points[0]);
+            let p2_placed = predict_point_based_on_edge(from_v, to_cs, base_points[1]);
             CoordinateSystem::new(p1_placed, p2_placed - p1_placed)
         };
 
@@ -341,10 +359,13 @@ pub fn place_one_connected_component(
             if to_cs[s1.fig].is_some() && to_cs[s2.fig].is_none() {
                 changed = true;
 
-                let match_res = &matched_borders[&(s1, s2)];
+                let base_points = base_points_matrix[[s1.fig, s1.side, s2.fig, s2.side]];
 
                 to_cs[s2.fig] = Some(predict_to_cs_based_on_edge(
-                    s1.fig, &to_cs, s2.fig, match_res,
+                    s1.fig,
+                    &to_cs,
+                    s2.fig,
+                    &base_points,
                 ));
             }
         }
@@ -358,16 +379,17 @@ pub fn place_one_connected_component(
         let mut new_start = vec![PointF::ZERO; positions.len()];
         let mut new_x_dir = vec![PointF::ZERO; positions.len()];
         let mut cnt_edges = vec![0; positions.len()];
-        for _iter in 0..1000 {
+        for _iter in 0..1000 * (if very_big { 10 } else { 1 }) {
             for &c in component.iter() {
                 new_start[c] = PointF::ZERO;
                 new_x_dir[c] = PointF::ZERO;
                 cnt_edges[c] = 0;
             }
             for &(s1, s2) in used_edges_two_sides.iter() {
-                let match_res = &matched_borders[&(s1, s2)];
+                // let match_res = &matched_borders[&(s1, s2)];
+                let base_points = base_points_matrix[[s1.fig, s1.side, s2.fig, s2.side]];
 
-                let new_cs = predict_to_cs_based_on_edge(s1.fig, &to_cs, s2.fig, match_res);
+                let new_cs = predict_to_cs_based_on_edge(s1.fig, &to_cs, s2.fig, &base_points);
 
                 new_start[s2.fig] = new_start[s2.fig] + new_cs.start;
                 new_x_dir[s2.fig] = new_x_dir[s2.fig] + new_cs.x_dir;
@@ -395,13 +417,19 @@ pub fn place_one_connected_component(
         );
     }
 
-    local_optimize_positions(&used_edges, positions, parsed_puzzles, component)
+    Some(local_optimize_positions(
+        &used_edges,
+        positions,
+        parsed_puzzles,
+        component,
+    ))
 }
 
 pub fn place_on_surface(
     graph: &Graph,
     placement: &Placement,
     parsed_puzzles: &ParsedPuzzles,
+    base_points_matrix: &Array4<[PointF; 2]>,
 ) -> Vec<Option<Vec<PointF>>> {
     assert_eq!(graph.n, parsed_puzzles.figures.len());
     eprintln!("Start placing on the surface!");
@@ -428,7 +456,13 @@ pub fn place_on_surface(
             .cloned()
             .collect_vec();
 
-        place_one_connected_component(parsed_puzzles, &cur_component, &used_edges, &mut positions);
+        place_one_connected_component(
+            parsed_puzzles,
+            &cur_component,
+            &used_edges,
+            &mut positions,
+            base_points_matrix,
+        );
 
         eprintln!("Rotate component!");
         rotate_component(

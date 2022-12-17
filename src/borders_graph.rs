@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use crate::{
     border_matcher::{match_borders, match_borders_without_move},
-    figure::Figure,
     parsed_puzzles::ParsedPuzzles,
-    placement::{self, Placement},
+    placement::Placement,
+    point::PointF,
     utils::Side,
 };
 
@@ -21,6 +21,8 @@ pub struct Edge {
     pub side2: usize,
     pub score: f64,
     pub existing_edge: bool,
+    pub base_p1: PointF,
+    pub base_p2: PointF,
 }
 
 impl Edge {
@@ -81,10 +83,13 @@ impl Graph {
 
         for fig1 in 0..figures.len() {
             eprintln!("{}/{}", fig1, figures.len());
-            let more_edges: Vec<_> = (fig1 + 1..figures.len())
+            let more_edges: Vec<_> = (0..figures.len())
                 .into_par_iter()
                 .map(|fig2| {
-                    if !figures[fig1].is_good_puzzle() || !figures[fig2].is_good_puzzle() {
+                    if !figures[fig1].is_good_puzzle()
+                        || !figures[fig2].is_good_puzzle()
+                        || fig1 == fig2
+                    {
                         return vec![];
                     }
                     let mut new_edges = vec![];
@@ -112,6 +117,10 @@ impl Graph {
                             .is_some();
                             if let Some(res) = match_borders(parsed_puzzles, s1, s2) {
                                 let score = res.score;
+                                let (i1, i2) =
+                                    parsed_puzzles.figures[s2.fig].get_cs_points_indexes();
+                                let base_p1 = res.rhs[i1];
+                                let base_p2 = res.rhs[i2];
                                 new_edges.push(Edge {
                                     fig1,
                                     fig2,
@@ -119,6 +128,8 @@ impl Graph {
                                     side2,
                                     score,
                                     existing_edge,
+                                    base_p1,
+                                    base_p2,
                                 });
                                 if existing_edge {
                                     eprintln!("Add existing edge: {fig1} {fig2}");
@@ -158,6 +169,16 @@ impl Graph {
             dist[[edge.fig2, edge.side2, edge.fig1, edge.side1]] = edge.score;
         }
         dist
+    }
+
+    pub fn get_base_points_matrix(&self) -> Array4<[PointF; 2]> {
+        let n = self.n;
+        let mut res = Array4::<[PointF; 2]>::from_elem((n, 4, n, 4), [PointF::ZERO, PointF::ZERO]);
+        for edge in self.all_edges.iter() {
+            assert_ne!(edge.base_p1, edge.base_p2);
+            res[[edge.fig1, edge.side1, edge.fig2, edge.side2]] = [edge.base_p1, edge.base_p2];
+        }
+        res
     }
 
     pub(crate) fn num_vertices(&self) -> usize {

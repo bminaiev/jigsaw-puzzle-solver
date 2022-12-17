@@ -15,6 +15,7 @@ use crate::{
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
     point::PointF,
+    positions_cache::PositionsCache,
     surface_placer::{place_on_surface, put_solutions_on_surface},
     utils::load_image_from_path,
 };
@@ -35,6 +36,7 @@ mod my_widget;
 mod parsed_puzzles;
 mod placement;
 mod point;
+mod positions_cache;
 mod rects_fitter;
 mod surface_placer;
 mod topn;
@@ -88,6 +90,7 @@ fn main_load_graph() {
     eprintln!("graph loaded! n = {}", graph.n);
 
     let mut known_facts = KnownFacts::load();
+    let mut positions_cache = PositionsCache::load(&parsed_puzzles);
 
     let mut solution_graph = {
         let mut prev_state: Option<Graph> = if LOAD_EXISTING_SOLUTION {
@@ -100,6 +103,7 @@ fn main_load_graph() {
             &parsed_puzzles,
             prev_state.clone(),
             &mut known_facts,
+            &mut positions_cache,
         )
     };
     solution_graph.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));

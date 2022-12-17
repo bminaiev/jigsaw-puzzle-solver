@@ -67,8 +67,10 @@ impl KnownFacts {
     pub fn get_all_placed_vertices(&self) -> Vec<usize> {
         let mut res = vec![];
         for fact in self.facts.iter() {
-            res.push(fact.side1.fig);
-            res.push(fact.side2.fig);
+            if fact.good_edge {
+                res.push(fact.side1.fig);
+                res.push(fact.side2.fig);
+            }
         }
         res.sort();
         res.dedup();

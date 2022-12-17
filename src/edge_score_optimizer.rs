@@ -42,6 +42,7 @@ pub fn optimize_edge_scores(
     graph: &Graph,
     calc_new_scores: bool,
 ) -> Vec<PotentialSolution> {
+    let base_points_matrix = graph.get_base_points_matrix();
     let dist = graph.gen_adj_matrix();
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
     let placement = get_known_placement(graph);
@@ -102,7 +103,9 @@ pub fn optimize_edge_scores(
             &cur_component,
             &used_edges,
             &mut positions,
-        );
+            &base_points_matrix,
+        )
+        .unwrap_or(f64::MAX);
         rotate_component(
             &cur_component,
             &mut positions,

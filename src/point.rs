@@ -1,4 +1,5 @@
 use eframe::epaint::{pos2, Pos2};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug)]
 pub struct Point {
@@ -57,7 +58,7 @@ impl Point {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PointF {
     pub x: f64,
     pub y: f64,
