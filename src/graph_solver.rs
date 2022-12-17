@@ -886,6 +886,8 @@ fn gen_relative_dists(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Array4<f
 struct Search3State {
     s0: [Side; 3],
     s1: [Side; 3],
+    left: Option<[Side; 2]>,
+    right: Option<[Side; 2]>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -917,6 +919,16 @@ impl Search3State {
         }
         for i in 0..3 {
             res.push((self.s0[i].ne(), self.s1[i].pr()));
+        }
+        if let Some(left) = self.left {
+            res.push((left[0], self.s0[0].ne2()));
+            res.push((left[1], self.s1[0].ne2()));
+            res.push((left[0].ne(), left[1].pr()));
+        }
+        if let Some(right) = self.right {
+            res.push((self.s0[2], right[0].ne2()));
+            res.push((self.s1[2], right[1].ne2()));
+            res.push((right[0].ne(), right[1].pr()));
         }
         res
     }
@@ -982,6 +994,8 @@ fn find_best_next(
                 let potential_next_state = Search3State {
                     s0: state.s1,
                     s1: [s20, s21, s22],
+                    left: state.left.clone(),
+                    right: state.right.clone(),
                 };
                 let with_score = potential_next_state.with_score(dist.clone());
                 next.push(with_score);
@@ -1116,9 +1130,9 @@ pub fn solve_graph_add_by_3(
             .unwrap(),
         );
 
-        // [s00, s01, s02]
-        // [s10, s11, s12]
-        //   <- want to find this row
+        //      [s00, s01, s02]
+        // (l0) [s10, s11, s12] (r0)
+        // (l1)  [want to find] (r1)
 
         // -> default
         //
@@ -1134,28 +1148,54 @@ pub fn solve_graph_add_by_3(
                         let s11 = s11l.ne2();
                         if let Some(s12l) = start_edges.get(&s11) {
                             let s12 = s12l.ne2();
+
+                            let l0 = start_edges.get(&s10.ne2()).cloned();
+                            let l1u = l0.and_then(|l0| start_edges.get(&l0.ne())).cloned();
+                            let l1 = l1u.map(|l1u| l1u.ne());
+
+                            let r0l = start_edges.get(&s12).cloned();
+                            let r0 = r0l.map(|r0l| r0l.ne2());
+                            let r1u = r0.and_then(|r0| start_edges.get(&r0.ne()));
+                            let r1 = r1u.map(|r1u| r1u.ne());
+
+                            let collect_side =
+                                |up: Option<Side>, down: Option<Side>| -> Option<[Side; 2]> {
+                                    Some([up?, down?])
+                                };
+
+                            let mut left = collect_side(l0, l1);
+                            let mut right = collect_side(r0, r1);
+
                             let mut cnt_exist = 0;
                             if start_edges.contains_key(&s10.ne()) {
                                 cnt_exist += 1;
+                                left = None;
                             }
                             if start_edges.contains_key(&s11.ne()) {
                                 cnt_exist += 1;
                             }
                             if start_edges.contains_key(&s12.ne()) {
                                 cnt_exist += 1;
+                                right = None;
                             }
+                            let bad = cnt_exist == 0
+                                && left.is_none()
+                                && right.is_none()
+                                && !on_border[s10.fig]
+                                && !on_border[s12.fig];
                             if cnt_exist < 3
                                 && possible_to_extend(s10.ne())
                                 && possible_to_extend(s11.ne())
                                 && possible_to_extend(s12.ne())
+                                && !bad
                             {
-                                if on_border[s10.fig] || on_border[s12.fig] || cnt_exist != 3 {
-                                    let search_state = Search3State {
-                                        s0: [s00, s01, s02],
-                                        s1: [s10, s11, s12],
-                                    };
-                                    states.push(search_state);
-                                }
+                                let search_state = Search3State {
+                                    s0: [s00, s01, s02],
+                                    s1: [s10, s11, s12],
+                                    left,
+                                    right,
+                                };
+                                states.push(search_state);
                             }
                         }
                     }
