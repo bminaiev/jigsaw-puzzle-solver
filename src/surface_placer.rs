@@ -199,6 +199,12 @@ fn local_optimize_positions(
             .map(|move_cs| move_cs.to_cs.clone())
             .collect_vec();
         let start_score = calc_score(&to_cs);
+        if very_big {
+            eprintln!("start score: {}", start_score.get_final_score());
+        }
+        if start_score.get_final_score() < 20.0 && very_big {
+            break;
+        }
         let to_cs =
             local_optimize_coordinate_systems(&to_cs, |to_cs| calc_score(to_cs).get_final_score());
         let new_score = calc_score(&to_cs);
@@ -379,7 +385,7 @@ pub fn place_one_connected_component(
         let mut new_start = vec![PointF::ZERO; positions.len()];
         let mut new_x_dir = vec![PointF::ZERO; positions.len()];
         let mut cnt_edges = vec![0; positions.len()];
-        for _iter in 0..1000 * (if very_big { 10 } else { 1 }) {
+        for _iter in 0..1000 * (if very_big { 0 } else { 1 }) {
             for &c in component.iter() {
                 new_start[c] = PointF::ZERO;
                 new_x_dir[c] = PointF::ZERO;

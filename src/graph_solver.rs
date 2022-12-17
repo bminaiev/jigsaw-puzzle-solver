@@ -5,6 +5,7 @@ use std::{
     process,
 };
 
+use eframe::epaint::{Color32, ColorImage};
 use itertools::Itertools;
 use ndarray::Array4;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -18,8 +19,9 @@ use crate::{
     known_positions::get_known_placement,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
-    point::PointF,
+    point::{Point, PointF},
     positions_cache::PositionsCache,
+    rects_fitter::get_bounding_box,
     surface_placer::{place_one_connected_component, rotate_component},
     topn::TopN,
     utils::{fmax, fmin, normalize_bounding_box, Side},
@@ -172,6 +174,67 @@ pub struct PotentialSolution {
     pub bbox: (PointF, PointF),
     pub new_figures_used: Vec<usize>,
     pub new_edges_used: Vec<(Side, Side)>,
+}
+
+fn is_inside(border: &[PointF], p: PointF) -> bool {
+    let mut cnt_intersections = 0;
+    for (p1, p2) in border.iter().circular_tuple_windows() {
+        let (p_min, p_max) = if p1.y < p2.y { (p1, p2) } else { (p2, p1) };
+        if PointF::vect_mul(p_min, p_max, &p) <= 0.0 {
+            if p.y >= p_min.y && p.y < p_max.y {
+                cnt_intersections += 1;
+            }
+        }
+    }
+    cnt_intersections % 2 == 1
+}
+
+fn get_pixels_inside_figure(border: &[PointF]) -> Vec<Point> {
+    let (p0, p1) = get_bounding_box(border);
+    let mut res = vec![];
+    for x in p0.x as usize..p1.x as usize {
+        for y in p0.y as usize..p1.y as usize {
+            if is_inside(
+                border,
+                PointF {
+                    x: x as f64,
+                    y: y as f64,
+                },
+            ) {
+                res.push(Point { x, y });
+            }
+        }
+    }
+    res
+}
+
+impl PotentialSolution {
+    pub fn gen_image(ps: &[Self]) -> ColorImage {
+        eprintln!("Start generating solutions mask");
+        let mut max_x = 0;
+        let mut max_y = 0;
+        for sol in ps.iter() {
+            max_x = max(max_x, sol.bbox.1.x as usize + 2);
+            max_y = max(max_y, sol.bbox.1.y as usize + 2);
+        }
+
+        let mut res = ColorImage::new([max_x, max_y], Color32::TRANSPARENT);
+
+        for sol in ps.iter() {
+            for fig in sol.placed_figures.iter() {
+                if sol.new_figures_used.contains(&fig.figure_id) {
+                    continue;
+                }
+                let pixels = get_pixels_inside_figure(&fig.positions);
+                for p in pixels.iter() {
+                    res[(p.x, p.y)] = Color32::LIGHT_GRAY;
+                }
+            }
+        }
+        eprintln!("Image generated!");
+
+        res
+    }
 }
 
 pub fn find_sides_by_known_edge(

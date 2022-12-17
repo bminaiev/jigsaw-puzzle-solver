@@ -33,6 +33,7 @@ pub struct MyWidget {
     frame: Vec<Pos2>,
     image_path: String,
     mask_image: RetainedImage,
+    solutions_image_mask: Option<RetainedImage>,
     parsed_puzzles: ParsedPuzzles,
     matched_borders: Vec<Vec<MatchResult>>,
     solutions: Vec<PotentialSolution>,
@@ -73,12 +74,20 @@ impl MyWidget {
         let color_image = load_image_from_path(path).unwrap();
 
         let parsed_puzzles = ParsedPuzzles::new(&color_image);
-        let mask_image = if !show_parsed {
-            RetainedImage::from_color_image("test", color_image.clone())
-        } else {
-            let color = parsed_puzzles.gen_image();
+        let mask_image = if show_parsed {
+            let color = parsed_puzzles.gen_image(&known_facts);
             save_color_image(&color, "img/puzzle.jpg");
             RetainedImage::from_color_image("mask", color)
+        } else {
+            RetainedImage::from_color_image("test", color_image.clone())
+        };
+        let solutions_image_mask = if solutions.is_empty() {
+            None
+        } else {
+            Some(RetainedImage::from_color_image(
+                "solutions mask",
+                PotentialSolution::gen_image(&solutions),
+            ))
         };
 
         let image = RetainedImage::from_color_image("test", color_image.clone());
@@ -99,6 +108,7 @@ impl MyWidget {
             image,
             image_path: path.to_owned(),
             mask_image,
+            solutions_image_mask,
             parsed_puzzles,
             matched_borders: vec![vec![]; 4],
             solutions,
@@ -374,12 +384,29 @@ impl MyWidget {
         let offset = vec2(0.0, self.image.size()[1] as f32 + 100.0);
 
         {
-            let img_size = self.image.size_vec2();
-            let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
-            let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
-            let rect = Rect::from_min_max(min, max);
-            ui.painter()
-                .rect_filled(rect, Rounding::default(), Color32::WHITE);
+            {
+                let img_size = self.image.size_vec2();
+                let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
+                let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
+                let rect = Rect::from_min_max(min, max);
+                ui.painter()
+                    .rect_filled(rect, Rounding::default(), Color32::WHITE);
+            }
+            {
+                let img_size = self.solutions_image_mask.as_ref().unwrap().size_vec2();
+                let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
+                let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
+                let rect = Rect::from_min_max(min, max);
+                let texture_id2 = self
+                    .solutions_image_mask
+                    .as_ref()
+                    .unwrap()
+                    .texture_id(&ui.ctx());
+                let mut mesh2 = Mesh::with_texture(texture_id2);
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                mesh2.add_rect_with_uv(rect, uv, Color32::WHITE);
+                ui.painter().add(Shape::mesh(mesh2));
+            }
         }
 
         for (sol_id, sol) in self.solutions.iter().enumerate() {

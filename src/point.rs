@@ -110,6 +110,10 @@ impl PointF {
             y: -angle.sin() * self.x + angle.cos() * self.y,
         }
     }
+
+    pub fn vect_mul(p1: &Self, p2: &Self, p3: &Self) -> f64 {
+        (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
+    }
 }
 
 impl std::ops::Add for PointF {

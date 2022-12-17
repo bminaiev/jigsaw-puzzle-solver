@@ -3,7 +3,6 @@ use std::{
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
     ops::Range,
-    process,
 };
 
 use eframe::epaint::{Color32, ColorImage};
@@ -11,10 +10,11 @@ use itertools::Itertools;
 use rand::Rng;
 
 use crate::{
-    average_color::{self, AverareColor},
+    average_color::AverareColor,
     border_matcher::is_picture_border,
     dsu::Dsu,
     figure::{BorderFigure, Figure},
+    known_facts::KnownFacts,
     point::Point,
     utils::{save_color_image, Side},
     PUZZLE_PIXEL_WHITE_THRESHOLD,
@@ -235,15 +235,18 @@ impl ParsedPuzzles {
         }
     }
 
-    pub fn gen_image(&self) -> ColorImage {
+    pub fn gen_image(&self, known_facts: &KnownFacts) -> ColorImage {
         let mut res = ColorImage::new([self.width, self.height], Color32::TRANSPARENT);
 
         let mut rng = rand::thread_rng();
-        for figure in self.figures.iter() {
+        let all_placed = known_facts.get_all_placed_vertices();
+        for (fig_id, figure) in self.figures.iter().enumerate() {
             let color = Color32::from_rgb(rng.gen(), rng.gen(), rng.gen());
-            for p in figure.all_pts.iter() {
-                if p.x < self.width && p.y < self.height {
-                    // res[(p.x, p.y)] = color;
+            if !all_placed.contains(&fig_id) && figure.is_good_puzzle() {
+                for p in figure.all_pts.iter() {
+                    if p.x < self.width && p.y < self.height {
+                        res[(p.x, p.y)] = Color32::GRAY;
+                    }
                 }
             }
             let border_color = if figure.good_border {
