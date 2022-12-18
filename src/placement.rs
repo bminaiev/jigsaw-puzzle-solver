@@ -1,3 +1,9 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
+use eframe::epaint::util::hash;
 use itertools::Itertools;
 
 use crate::{borders_graph::Graph, utils::Side};
@@ -6,6 +12,15 @@ use crate::{borders_graph::Graph, utils::Side};
 pub struct Pos {
     x: i32,
     y: i32,
+}
+
+impl Pos {
+    pub fn shift(&self, dx: i32, dy: i32) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+        }
+    }
 }
 
 impl std::ops::Sub for Pos {
@@ -58,6 +73,17 @@ const DEFAULT_POS: [Pos; 4] = [
     Pos { x: 1, y: 0 },
 ];
 
+fn calc_bbox(all_pos: &[Pos]) -> (Pos, Pos) {
+    if all_pos.is_empty() {
+        return (Pos { x: 0, y: 0 }, Pos { x: 0, y: 0 });
+    }
+    let max_x = all_pos.iter().map(|p| p.x).max().unwrap();
+    let min_x = all_pos.iter().map(|p| p.x).min().unwrap();
+    let max_y = all_pos.iter().map(|p| p.y).max().unwrap();
+    let min_y = all_pos.iter().map(|p| p.y).min().unwrap();
+    (Pos { x: min_x, y: min_y }, Pos { x: max_x, y: max_y })
+}
+
 impl Placement {
     pub fn new() -> Self {
         Self { figures: vec![] }
@@ -72,21 +98,20 @@ impl Placement {
         res
     }
 
-    pub fn get_bounding_box(&self) -> (i32, i32) {
+    pub fn get_bounding_box_points(&self) -> (Pos, Pos) {
         let all_pos = self
             .figures
             .iter()
             .map(|f| f.positions.iter())
             .flatten()
+            .cloned()
             .collect_vec();
-        if all_pos.is_empty() {
-            return (0, 0);
-        }
-        let max_x = all_pos.iter().map(|p| p.x).max().unwrap();
-        let min_x = all_pos.iter().map(|p| p.x).min().unwrap();
-        let max_y = all_pos.iter().map(|p| p.y).max().unwrap();
-        let min_y = all_pos.iter().map(|p| p.y).min().unwrap();
-        (max_x - min_x, max_y - min_y)
+        calc_bbox(&all_pos)
+    }
+
+    pub fn get_bounding_box(&self) -> (i32, i32) {
+        let (p0, p1) = self.get_bounding_box_points();
+        (p1.x - p0.x, p1.y - p0.y)
     }
 
     fn get_fig_index(&self, fig: usize) -> Option<usize> {
@@ -389,6 +414,7 @@ impl Placement {
         res
     }
 
+    // each edge is returned two times: (s1, s2) and (s2, s1)
     pub fn get_all_neighbours(&self) -> Vec<(Side, Side)> {
         let mut res = vec![];
         for comp_id in self.get_all_comp_ids() {
@@ -400,6 +426,15 @@ impl Placement {
     pub fn get_all_neighbours_in_same_component(&self, v: usize) -> Vec<(Side, Side)> {
         let comp_id = self.get_comp_id(v);
         self.gen_edges_between_comps(comp_id, comp_id)
+    }
+
+    pub fn get_only_one_component_placement(&self, vertex: usize) -> Self {
+        let edges = self.get_all_neighbours_in_same_component(vertex);
+        let mut res = Placement::new();
+        for &(s1, s2) in edges.iter() {
+            res.join_sides(s1, s2).unwrap();
+        }
+        res
     }
 
     fn get_corner_by_side(p1: Pos, p2: Pos) -> (Pos, usize) {
@@ -478,6 +513,87 @@ impl Placement {
         res
     }
 
+    pub fn get_potential_group_locations(&self, max_cnt: u32) -> Vec<PotentialGroupLocation> {
+        for i in 1..self.figures.len() {
+            assert_eq!(self.figures[i].comp_id, self.figures[0].comp_id);
+        }
+        let all_neighbours = self.get_all_neighbours();
+        let mut res = vec![];
+        let locations = self.get_potential_locations(false);
+        let (p0, p1) = self.get_bounding_box_points();
+        const WINDOW_SIZE: i32 = 3;
+        for x0 in p0.x - 1..p1.x {
+            for y0 in p0.y - 1..p1.y {
+                let mut inside = vec![];
+                for loc in locations.iter() {
+                    if loc.pos.x >= x0 && loc.pos.x < x0 + WINDOW_SIZE {
+                        if loc.pos.y >= y0 && loc.pos.y < y0 + WINDOW_SIZE {
+                            inside.push(loc.clone());
+                        }
+                    }
+                }
+                for mask in 0u32..(1 << inside.len()) {
+                    if mask.count_ones() > 0 && mask.count_ones() <= max_cnt {
+                        let mut used_inside = vec![];
+                        for i in 0..inside.len() {
+                            if ((1 << i) & mask) != 0 {
+                                used_inside.push(inside[i].clone());
+                            }
+                        }
+                        let (p0, p1) = calc_bbox(&used_inside.iter().map(|l| l.pos).collect_vec());
+                        let p0 = p0.shift(-1, -1);
+                        let p1 = p1.shift(1, 1);
+                        let existing_figures = (0..self.figures.len())
+                            .filter_map(|idx| {
+                                let corner = self.get_top_left_corner_by_idx(idx);
+                                if corner.x >= p0.x
+                                    && corner.x <= p1.x
+                                    && corner.y >= p0.y
+                                    && corner.y <= p1.y
+                                {
+                                    Some(self.figures[idx].figure_id)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect_vec();
+                        let existing_edges = all_neighbours
+                            .iter()
+                            .filter(|(s1, s2)| {
+                                existing_figures.contains(&s1.fig)
+                                    && existing_figures.contains(&s2.fig)
+                                    && s1.fig < s2.fig
+                            })
+                            .cloned()
+                            .collect_vec();
+                        let new_figures_edges = calc_new_figures_edges(&used_inside);
+                        if new_figures_edges.len() < used_inside.len() - 1 {
+                            // checking that everything is connected.
+                            // otherwise this check will not work.
+                            assert!(max_cnt <= 3);
+                            continue;
+                        }
+                        // we only care about sides nearby, so we can hash the state
+                        for loc in used_inside.iter_mut() {
+                            loc.pos = Pos { x: 0, y: 0 };
+                        }
+                        let potential_group = PotentialGroupLocation {
+                            locations: used_inside,
+                            existing_edges,
+                            new_figures_edges,
+                        };
+                        if potential_group.each_new_figure_has_at_least_two_edges() {
+                            res.push(potential_group);
+                        }
+                    }
+                }
+            }
+        }
+        res.sort();
+        res.dedup();
+        res
+    }
+
     pub fn get_figure_by_position(&self, top_left: Pos) -> Option<[Side; 4]> {
         for (idx, fig) in self.figures.iter().enumerate() {
             if self.get_top_left_corner_by_idx(idx) == top_left {
@@ -533,7 +649,137 @@ struct PotentialLocationSide {
     other_side: Side,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PotentialLocation {
     pub neighbors: [Option<Side>; 4],
     pub pos: Pos,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NewFigureEdge {
+    location_ids: [usize; 2],
+    sides: [usize; 2],
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct PotentialGroupLocation {
+    pub locations: Vec<PotentialLocation>,
+    pub existing_edges: Vec<(Side, Side)>,
+    pub new_figures_edges: Vec<NewFigureEdge>,
+}
+
+fn calc_new_figures_edges(locations: &[PotentialLocation]) -> Vec<NewFigureEdge> {
+    let mut res = vec![];
+    for i in 0..locations.len() {
+        for j in i + 1..locations.len() {
+            for s1 in 0..4 {
+                for s2 in 0..4 {
+                    let p1 = locations[i].pos + DEFAULT_POS[s1];
+                    let p2 = locations[i].pos + DEFAULT_POS[(s1 + 1) % 4];
+                    let p3 = locations[j].pos + DEFAULT_POS[s2];
+                    let p4 = locations[j].pos + DEFAULT_POS[(s2 + 1) % 4];
+                    if p1 == p4 && p2 == p3 {
+                        res.push(NewFigureEdge {
+                            location_ids: [i, j],
+                            sides: [s1, s2],
+                        })
+                    }
+                }
+            }
+        }
+    }
+    res
+}
+
+impl PotentialGroupLocation {
+    pub fn each_new_figure_has_at_least_two_edges(&self) -> bool {
+        for i in 0..self.locations.len() {
+            let mut cnt = 0;
+            for j in 0..4 {
+                if self.locations[i].neighbors[j].is_some() {
+                    cnt += 1;
+                }
+            }
+            for edge in self.new_figures_edges.iter() {
+                if edge.location_ids.contains(&i) {
+                    cnt += 1;
+                }
+            }
+            if cnt < 2 {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn get_way_edges(&self, first_sides: &[Side]) -> Vec<(Side, Side)> {
+        // TODO: check two-way.
+        let mut res = vec![];
+        res.extend(self.existing_edges.clone());
+        for i in 0..first_sides.len() {
+            for offset in 0..4 {
+                if let Some(s) = self.locations[i].neighbors[offset] {
+                    res.push((s, first_sides[i].ne_offset(offset)))
+                }
+            }
+        }
+        for edge in self.new_figures_edges.iter() {
+            let side1 = first_sides[edge.location_ids[0]].ne_offset(edge.sides[0]);
+            let side2 = first_sides[edge.location_ids[1]].ne_offset(edge.sides[1]);
+            res.push((side1, side2));
+        }
+        res
+    }
+
+    pub fn check_way(
+        &self,
+        first_sides: &[Side],
+        mut dist: impl FnMut(Side, Side) -> f64,
+    ) -> Search3StateWithScore {
+        let edges = self.get_way_edges(first_sides);
+        let score = edges.iter().map(|&(s1, s2)| dist(s1, s2)).sum::<f64>() / (edges.len() as f64);
+        Search3StateWithScore {
+            state: self.clone(),
+            first_sides: first_sides.to_vec(),
+            score,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Search3StateWithScore {
+    pub state: PotentialGroupLocation,
+    pub first_sides: Vec<Side>,
+    pub score: f64,
+}
+
+impl Eq for Search3StateWithScore {}
+
+impl PartialOrd for Search3StateWithScore {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Search3StateWithScore {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score.total_cmp(&other.score)
+    }
+}
+
+impl Search3StateWithScore {
+    pub fn get_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.state.hash(&mut hasher);
+        self.first_sides.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn all_edges(&self) -> Vec<(Side, Side)> {
+        self.state.get_way_edges(&self.first_sides)
+    }
+
+    pub fn get_key(&self) -> &PotentialGroupLocation {
+        &self.state
+    }
 }

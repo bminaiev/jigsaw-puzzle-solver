@@ -158,7 +158,7 @@ fn local_optimize_positions(
 
     let mut final_score = 0.0;
 
-    let very_big = cur_component.len() > 10;
+    let very_big = cur_component.len() > 20;
     for glob_iter in 0..(if very_big { 1 } else { 1 }) {
         let move_cs = cur_component
             .iter()

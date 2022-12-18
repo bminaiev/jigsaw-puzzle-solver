@@ -22,7 +22,7 @@ pub struct PositionsCache {
 
 const DEFAULT_PATH: &str = "positions_cache.json";
 
-const CACHE_GRAPH_SIZE: usize = 15;
+const CACHE_GRAPH_SIZE: usize = 25;
 
 impl PositionsCache {
     pub fn load(parsed_puzzles: &ParsedPuzzles) -> Self {

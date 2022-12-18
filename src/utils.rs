@@ -51,6 +51,13 @@ impl Side {
             side: norm_side(self.side + 3),
         }
     }
+
+    pub fn ne_offset(&self, offset: usize) -> Self {
+        Self {
+            fig: self.fig,
+            side: norm_side(self.side + offset),
+        }
+    }
 }
 
 pub fn fmax(x: f64, y: f64) -> f64 {

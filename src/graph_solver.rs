@@ -20,7 +20,7 @@ use crate::{
     known_facts::{self, EdgeState, Fact, KnownFacts},
     known_positions::get_known_placement,
     parsed_puzzles::ParsedPuzzles,
-    placement::Placement,
+    placement::{Placement, PotentialGroupLocation, Search3StateWithScore},
     point::{Point, PointF},
     positions_cache::PositionsCache,
     rects_fitter::get_bounding_box,
@@ -929,136 +929,68 @@ fn gen_relative_dists(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Array4<f
     dist
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Search3State {
-    s0: [Side; 3],
-    s1: [Side; 3],
-    left: Option<[Side; 2]>,
-    right: Option<[Side; 2]>,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct Search3StateWithScore {
-    state: Search3State,
-    score: f64,
-}
-
-impl Eq for Search3StateWithScore {}
-
-impl PartialOrd for Search3StateWithScore {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Search3StateWithScore {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score.total_cmp(&other.score)
-    }
-}
-
-impl Search3State {
-    pub fn get_hash(&self) -> u64 {
-        let mut s = DefaultHasher::new();
-        self.hash(&mut s);
-        s.finish()
-    }
-
-    pub fn get_key(&self) -> [Side; 3] {
-        self.s0
-    }
-
-    pub fn all_edges(&self) -> Vec<(Side, Side)> {
-        let mut res = vec![];
-        for s in [self.s0, self.s1].iter() {
-            res.push((s[0], s[1].ne2()));
-            res.push((s[1], s[2].ne2()));
+fn find_best_next_rec(
+    state: &PotentialGroupLocation,
+    first_sides: &mut Vec<Side>,
+    ways: &mut Vec<Search3StateWithScore>,
+    dist: impl FnMut(Side, Side) -> f64 + Clone,
+    to_check: &[Vec<Vec<Side>>],
+    to_check_limit: usize,
+    used: &[bool],
+) {
+    if state.locations.len() == first_sides.len() {
+        ways.push(state.check_way(&first_sides, dist));
+    } else {
+        let cur_loc = first_sides.len();
+        let mut good_sides = vec![];
+        for offset in 0..4 {
+            if let Some(other_side) = state.locations[cur_loc].neighbors[offset] {
+                let to_check = &to_check[other_side.fig][other_side.side];
+                let to_check = &to_check[..min(to_check_limit, to_check.len())];
+                for my_side in to_check.iter() {
+                    if used[my_side.fig] || first_sides.iter().any(|s| s.fig == my_side.fig) {
+                        continue;
+                    }
+                    good_sides.push(my_side.ne_offset(4 - offset));
+                }
+            }
         }
-        for i in 0..3 {
-            res.push((self.s0[i].ne(), self.s1[i].pr()));
-        }
-        if let Some(left) = self.left {
-            res.push((left[0], self.s0[0].ne2()));
-            res.push((left[1], self.s1[0].ne2()));
-            res.push((left[0].ne(), left[1].pr()));
-        }
-        if let Some(right) = self.right {
-            res.push((self.s0[2], right[0].ne2()));
-            res.push((self.s1[2], right[1].ne2()));
-            res.push((right[0].ne(), right[1].pr()));
-        }
-        res
-    }
-
-    pub fn all_vertices(&self) -> Vec<usize> {
-        let edges = self.all_edges();
-        let mut res = vec![];
-        for (s1, s2) in edges {
-            res.push(s1.fig);
-            res.push(s2.fig);
-        }
-        res.sort();
-        res.dedup();
-        res
-    }
-
-    pub fn with_score(&self, mut dist: impl FnMut(Side, Side) -> f64) -> Search3StateWithScore {
-        let edges = self.all_edges();
-        let score = edges.iter().map(|&(s1, s2)| dist(s1, s2)).sum::<f64>() / (edges.len() as f64);
-        Search3StateWithScore {
-            state: self.clone(),
-            score,
+        good_sides.sort();
+        good_sides.dedup();
+        for side in good_sides.into_iter() {
+            first_sides.push(side);
+            find_best_next_rec(
+                state,
+                first_sides,
+                ways,
+                dist.clone(),
+                to_check,
+                to_check_limit,
+                used,
+            );
+            first_sides.pop();
         }
     }
 }
 
 fn find_best_next(
-    state: &Search3State,
+    state: &PotentialGroupLocation,
     limit_inside: usize,
     limit_res: usize,
     to_check: &[Vec<Vec<Side>>],
     used: &[bool],
     dist: impl FnMut(Side, Side) -> f64 + Clone,
-    start_edges: &BTreeMap<Side, Side>,
 ) -> Vec<Search3StateWithScore> {
-    let to_check_down = |s: Side| -> &[Side] {
-        let res = &to_check[s.ne().fig][s.ne().side];
-        &res[..min(limit_inside, res.len())]
-    };
-
-    let start = [
-        start_edges.get(&state.s1[0].ne()),
-        start_edges.get(&state.s1[1].ne()),
-        start_edges.get(&state.s1[2].ne()),
-    ];
-
     let mut next = vec![];
-    for s20u in to_check_down(state.s1[0]) {
-        let s20 = s20u.ne();
-        if used[s20.fig] && Some(s20u) != start[0] {
-            continue;
-        }
-        for s21u in to_check_down(state.s1[1]) {
-            let s21 = s21u.ne();
-            if used[s21.fig] && Some(s21u) != start[1] {
-                continue;
-            }
-            for s22u in to_check_down(state.s1[2]) {
-                let s22 = s22u.ne();
-                if used[s22.fig] && Some(s22u) != start[2] {
-                    continue;
-                }
-                let potential_next_state = Search3State {
-                    s0: state.s1,
-                    s1: [s20, s21, s22],
-                    left: state.left.clone(),
-                    right: state.right.clone(),
-                };
-                let with_score = potential_next_state.with_score(dist.clone());
-                next.push(with_score);
-            }
-        }
-    }
+    find_best_next_rec(
+        state,
+        &mut vec![],
+        &mut next,
+        dist,
+        to_check,
+        limit_inside,
+        used,
+    );
     next.sort();
     next.truncate(limit_res);
     while !next.is_empty() && next.last().unwrap().score > 10000.0 {
@@ -1129,34 +1061,13 @@ pub fn solve_graph_add_by_3(
             }
         }
     }
-    let start_edges: BTreeMap<Side, Side> = start_placement
-        .get_all_neighbours_in_same_component(START_VERTEX)
-        .into_iter()
-        .collect();
-
     let dist = |s1: Side, s2: Side| -> f64 { dist[[s1.fig, s1.side, s2.fig, s2.side]] };
-
-    let mut possible_to_extend = vec![[false; 4]; n];
-    const TOO_BIG_COST: f64 = 100.0;
-    for &side in all_sides.iter() {
-        for &side2 in all_sides.iter() {
-            if dist(side, side2) < TOO_BIG_COST {
-                possible_to_extend[side.fig][side.side] = true;
-            }
-        }
-    }
-
-    let possible_to_extend = |s: Side| possible_to_extend[s.fig][s.side];
 
     let rot_positions;
 
-    let mut states = vec![];
+    let states;
     let mut used = vec![false; graph.n];
     {
-        // let placement = get_known_placement(graph);
-        // for (s1, s2) in placement.get_all_neighbours() {
-        //     known_facts.add_fact(&Fact::new(s1, s2, true));
-        // }
         let mut placement = Placement::new();
         for fact in known_facts.facts.iter() {
             if fact.good_edge {
@@ -1166,8 +1077,8 @@ pub fn solve_graph_add_by_3(
         for v in placement.get_all_used_figures() {
             used[v] = true;
         }
-
-        let edges = placement.get_all_neighbours_in_same_component(START_VERTEX);
+        let my_comp_placement = placement.get_only_one_component_placement(START_VERTEX);
+        let edges = my_comp_placement.get_all_neighbours();
         rot_positions = get_correct_rotation_positions(
             &edges,
             parsed_puzzles,
@@ -1176,88 +1087,13 @@ pub fn solve_graph_add_by_3(
             &base_points_matrix,
         );
 
-        //      [s00, s01, s02]
-        // (l0) [s10, s11, s12] (r0)
-        // (l1)  [want to find] (r1)
+        states = my_comp_placement.get_potential_group_locations(3);
 
-        // -> default
-        //
-        // |  next
-        // v
-        for &s00 in start_edges.keys() {
-            let s01 = start_edges[&s00].ne2();
-            if let Some(s02l) = start_edges.get(&s01) {
-                let s02 = s02l.ne2();
-                if let Some(s10u) = start_edges.get(&s00.ne()) {
-                    let s10 = s10u.ne();
-                    if let Some(s11l) = start_edges.get(&s10) {
-                        let s11 = s11l.ne2();
-                        if let Some(s12l) = start_edges.get(&s11) {
-                            let s12 = s12l.ne2();
-
-                            let l0 = start_edges.get(&s10.ne2()).cloned();
-                            let l1u = l0.and_then(|l0| start_edges.get(&l0.ne())).cloned();
-                            let l1 = l1u.map(|l1u| l1u.ne());
-
-                            let r0l = start_edges.get(&s12).cloned();
-                            let r0 = r0l.map(|r0l| r0l.ne2());
-                            let r1u = r0.and_then(|r0| start_edges.get(&r0.ne()));
-                            let r1 = r1u.map(|r1u| r1u.ne());
-
-                            let collect_side =
-                                |up: Option<Side>, down: Option<Side>| -> Option<[Side; 2]> {
-                                    Some([up?, down?])
-                                };
-
-                            let mut left = collect_side(l0, l1);
-                            let mut right = collect_side(r0, r1);
-
-                            let mut cnt_exist = 0;
-                            if start_edges.contains_key(&s10.ne()) {
-                                cnt_exist += 1;
-                                left = None;
-                            }
-                            let mut mid_absent = true;
-                            if start_edges.contains_key(&s11.ne()) {
-                                cnt_exist += 1;
-                                mid_absent = false;
-                            }
-                            if start_edges.contains_key(&s12.ne()) {
-                                cnt_exist += 1;
-                                right = None;
-                            }
-                            // TODO: roll back?
-                            let mut bad = cnt_exist == 4
-                                && left.is_none()
-                                && right.is_none()
-                                && !on_border[s10.fig]
-                                && !on_border[s12.fig];
-                            if cnt_exist == 2 && mid_absent {
-                                bad = true;
-                            }
-                            if cnt_exist < 3
-                                && possible_to_extend(s10.ne())
-                                && possible_to_extend(s11.ne())
-                                && possible_to_extend(s12.ne())
-                                && !bad
-                            {
-                                let search_state = Search3State {
-                                    s0: [s00, s01, s02],
-                                    s1: [s10, s11, s12],
-                                    left,
-                                    right,
-                                };
-                                states.push(search_state);
-                            }
-                        }
-                    }
-                }
-            }
-        }
         eprintln!("Start states: {}", states.len());
     }
 
     const CHECK_BEST: usize = 500;
+    const TOO_BIG_COST: f64 = 100.0;
     let mut to_check = calc_sorted_by_dist(parsed_puzzles, dist);
     for fig in 0..to_check.len() {
         for side in 0..4 {
@@ -1272,10 +1108,10 @@ pub fn solve_graph_add_by_3(
         }
     }
 
-    const LIMIT: usize = 275;
+    const LIMIT: usize = 5;
     let next_states: Vec<_> = states
         .par_iter()
-        .map(|st| find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist, &start_edges))
+        .map(|st| find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist))
         .collect();
     let mut next_states = next_states.into_iter().flatten().collect_vec();
     next_states.sort();
@@ -1283,16 +1119,16 @@ pub fn solve_graph_add_by_3(
     let states_cache = SearchStatesCache::load();
     let next_states: Vec<_> = next_states
         .into_iter()
-        .filter(|state| !states_cache.contains(state.state.get_hash(), 5.0))
+        .filter(|state| !states_cache.contains(state.get_hash(), 5.0))
         .collect_vec();
     eprintln!("After filtering: {} states", next_states.len());
 
     let more_res: Vec<_> = next_states
         .par_iter()
         .filter_map(|state| {
-            let used_edges = state.state.all_edges();
+            let used_edges = state.all_edges();
             Some((
-                state.state.clone(),
+                state.clone(),
                 gen_potential_solution(
                     &used_edges,
                     parsed_puzzles,
@@ -1432,23 +1268,4 @@ pub fn gen_potential_solution(
         new_figures_used,
         new_edges_used,
     })
-}
-
-fn calc_real_score(
-    state: &Search3State,
-    parsed_puzzles: &ParsedPuzzles,
-    base_points_matrix: &Array4<[PointF; 2]>,
-) -> f64 {
-    let used_edges = state.all_edges();
-    let cur_component = state.all_vertices();
-    let mut positions = vec![None; parsed_puzzles.figures.len()];
-
-    place_one_connected_component(
-        parsed_puzzles,
-        &cur_component,
-        &used_edges,
-        &mut positions,
-        base_points_matrix,
-    )
-    .unwrap_or(f64::MAX)
 }

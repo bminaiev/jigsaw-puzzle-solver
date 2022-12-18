@@ -7,10 +7,10 @@ use ndarray::Array4;
 
 use crate::{
     borders_graph::Graph,
-    graph_solver::{gen_potential_solution, PotentialSolution, Search3State},
+    graph_solver::{gen_potential_solution, PotentialSolution},
     known_facts::KnownFacts,
     parsed_puzzles::ParsedPuzzles,
-    placement::Placement,
+    placement::{Placement, PotentialGroupLocation, Search3StateWithScore},
     point::PointF,
     positions_cache::PositionsCache,
     surface_placer::put_solutions_on_surface,
@@ -19,7 +19,7 @@ use crate::{
 pub struct InteractiveSolutionPicker {
     pub solutions_to_show: Vec<PotentialSolution>,
     pub mask_image: RetainedImage,
-    all_solutions: Vec<(Search3State, PotentialSolution)>,
+    all_solutions: Vec<(Search3StateWithScore, PotentialSolution)>,
     start_vertex: usize,
     rot_positions: Vec<Option<Vec<PointF>>>,
     positions_cache: PositionsCache,
@@ -28,7 +28,7 @@ pub struct InteractiveSolutionPicker {
 
 impl InteractiveSolutionPicker {
     pub fn new(
-        all_solutions: Vec<(Search3State, PotentialSolution)>,
+        all_solutions: Vec<(Search3StateWithScore, PotentialSolution)>,
         start_vertex: usize,
         rot_positions: Vec<Option<Vec<PointF>>>,
         positions_cache: PositionsCache,
@@ -73,8 +73,7 @@ impl InteractiveSolutionPicker {
             graph,
         ));
         self.all_solutions.sort_by(|(a, b), (c, d)| {
-            a.get_key()
-                .cmp(&c.get_key())
+            a.cmp(&c)
                 .then(b.placement_score.total_cmp(&d.placement_score))
         });
 
