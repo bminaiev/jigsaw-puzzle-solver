@@ -14,10 +14,12 @@ use rand::{rngs::ThreadRng, Rng};
 
 use crate::{
     border_matcher::{match_borders, MatchResult},
+    borders_graph::Graph,
     crop::crop,
     dsu::Dsu,
     figure::Figure,
     graph_solver::PotentialSolution,
+    interactive_solutions_picker::InteractiveSolutionPicker,
     known_facts::{self, EdgeState, Fact, KnownFacts},
     parsed_puzzles::ParsedPuzzles,
     point::{Point, PointF},
@@ -33,10 +35,9 @@ pub struct MyWidget {
     frame: Vec<Pos2>,
     image_path: String,
     mask_image: RetainedImage,
-    solutions_image_mask: Option<RetainedImage>,
+    solutions_picker: Option<InteractiveSolutionPicker>,
     parsed_puzzles: ParsedPuzzles,
     matched_borders: Vec<Vec<MatchResult>>,
-    solutions: Vec<PotentialSolution>,
     show_parsed: bool,
     show_image: bool,
     fig_colors: Vec<Color32>,
@@ -46,6 +47,7 @@ pub struct MyWidget {
     selected_solution: Option<usize>,
     new_edges: Vec<EdgeState>,
     known_facts: KnownFacts,
+    graph: Graph,
 }
 
 const ZOOM_DELTA_COEF: f32 = 500.0;
@@ -64,16 +66,16 @@ fn gen_good_color(rng: &mut ThreadRng) -> Color32 {
 impl MyWidget {
     pub fn new(
         path: &str,
-        solutions: Vec<PotentialSolution>,
+        solutions_picker: Option<InteractiveSolutionPicker>,
         show_parsed: bool,
         show_image: bool,
         show_matched_borders: bool,
         crop_enabled: bool,
         known_facts: KnownFacts,
+        graph: Graph,
+        parsed_puzzles: ParsedPuzzles,
     ) -> Self {
         let color_image = load_image_from_path(path).unwrap();
-
-        let parsed_puzzles = ParsedPuzzles::new(&color_image);
 
         let mut rng = rand::thread_rng();
         let fig_colors = (0..parsed_puzzles.figures.len())
@@ -85,14 +87,6 @@ impl MyWidget {
             RetainedImage::from_color_image("mask", color)
         } else {
             RetainedImage::from_color_image("test", color_image.clone())
-        };
-        let solutions_image_mask = if solutions.is_empty() {
-            None
-        } else {
-            Some(RetainedImage::from_color_image(
-                "solutions mask",
-                PotentialSolution::gen_image(&solutions, &fig_colors),
-            ))
         };
 
         let image = RetainedImage::from_color_image("test", color_image.clone());
@@ -110,10 +104,9 @@ impl MyWidget {
             image,
             image_path: path.to_owned(),
             mask_image,
-            solutions_image_mask,
             parsed_puzzles,
             matched_borders: vec![vec![]; 4],
-            solutions,
+            solutions_picker,
             show_parsed,
             fig_colors,
             show_image,
@@ -123,6 +116,7 @@ impl MyWidget {
             selected_solution: None,
             new_edges: vec![],
             known_facts,
+            graph,
         }
     }
 
@@ -294,8 +288,10 @@ impl MyWidget {
         }
 
         if let Some(sol_id) = self.selected_solution {
-            for &new_fig in self.solutions[sol_id].new_figures_used.iter() {
-                self.show_border(&self.parsed_puzzles.figures[new_fig], ui);
+            if let Some(sol_picker) = &self.solutions_picker {
+                for &new_fig in sol_picker.solutions_to_show[sol_id].new_figures_used.iter() {
+                    self.show_border(&self.parsed_puzzles.figures[new_fig], ui);
+                }
             }
         }
     }
@@ -379,121 +375,144 @@ impl MyWidget {
     }
 
     fn show_solution(&mut self, ui: &mut eframe::egui::Ui) {
-        if self.solutions.is_empty() {
-            return;
-        }
+        let mut change_picked_solution = None;
 
-        let offset = vec2(0.0, self.image.size()[1] as f32 + 100.0);
-
-        {
-            {
-                let img_size = self.image.size_vec2();
-                let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
-                let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
-                let rect = Rect::from_min_max(min, max);
-                ui.painter()
-                    .rect_filled(rect, Rounding::default(), Color32::WHITE);
-            }
-            {
-                let img_size = self.solutions_image_mask.as_ref().unwrap().size_vec2();
-                let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
-                let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
-                let rect = Rect::from_min_max(min, max);
-                let texture_id2 = self
-                    .solutions_image_mask
-                    .as_ref()
-                    .unwrap()
-                    .texture_id(&ui.ctx());
-                let mut mesh2 = Mesh::with_texture(texture_id2);
-                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                mesh2.add_rect_with_uv(rect, uv, Color32::WHITE);
-                ui.painter().add(Shape::mesh(mesh2));
-            }
-        }
-
-        for (sol_id, sol) in self.solutions.iter().enumerate() {
-            for fig in sol.placed_figures.iter() {
-                let color = self.fig_colors[fig.figure_id];
-                for (p1, p2) in fig.positions.iter().circular_tuple_windows() {
-                    let p1 = self.convert_to_screen(p1.pos2() + offset);
-                    let p2 = self.convert_to_screen(p2.pos2() + offset);
-
-                    ui.painter().line_segment([p1, p2], Stroke::new(1.5, color))
+        if let Some(sol_picker) = &self.solutions_picker {
+            let mut should_highlight = vec![false; self.graph.n];
+            if let Some(sol_id) = self.selected_solution {
+                for fig in sol_picker.solutions_to_show[sol_id].placed_figures.iter() {
+                    should_highlight[fig.figure_id] = true;
                 }
+            }
+            let offset = vec2(0.0, self.image.size()[1] as f32 + 100.0);
 
-                for &pos in self.parsed_puzzles.figures[fig.figure_id]
-                    .corner_positions
-                    .iter()
+            {
                 {
-                    let p = self.convert_to_screen(fig.positions[pos].pos2() + offset);
-                    ui.painter().add(Shape::circle_filled(p, 2.0, color));
+                    let img_size = self.image.size_vec2();
+                    let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
+                    let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
+                    let rect = Rect::from_min_max(min, max);
+                    ui.painter()
+                        .rect_filled(rect, Rounding::default(), Color32::WHITE);
                 }
+                {
+                    let img_size = sol_picker.mask_image.size_vec2();
+                    let min = self.convert_to_screen(pos2(0.0, 0.0) + offset);
+                    let max = self.convert_to_screen(pos2(img_size.x, img_size.y) + offset);
+                    let rect = Rect::from_min_max(min, max);
+                    let texture_id2 = sol_picker.mask_image.texture_id(&ui.ctx());
+                    let mut mesh2 = Mesh::with_texture(texture_id2);
+                    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                    mesh2.add_rect_with_uv(rect, uv, Color32::WHITE);
+                    ui.painter().add(Shape::mesh(mesh2));
+                }
+            }
 
-                let center = self.convert_to_screen(calc_center(&fig.positions).pos2() + offset);
+            for (sol_id, sol) in sol_picker.solutions_to_show.iter().enumerate() {
+                for fig in sol.placed_figures.iter() {
+                    let color = self.fig_colors[fig.figure_id];
+                    let border_stroke = if should_highlight[fig.figure_id] {
+                        Stroke::new(3.0, color)
+                    } else {
+                        Stroke::new(1.0, Color32::BLACK)
+                    };
+                    for (p1, p2) in fig.positions.iter().circular_tuple_windows() {
+                        let p1 = self.convert_to_screen(p1.pos2() + offset);
+                        let p2 = self.convert_to_screen(p2.pos2() + offset);
+
+                        ui.painter().line_segment([p1, p2], border_stroke)
+                    }
+
+                    // for &pos in self.parsed_puzzles.figures[fig.figure_id]
+                    //     .corner_positions
+                    //     .iter()
+                    // {
+                    //     let p = self.convert_to_screen(fig.positions[pos].pos2() + offset);
+                    //     ui.painter().add(Shape::circle_filled(p, 2.0, color));
+                    // }
+
+                    let center =
+                        self.convert_to_screen(calc_center(&fig.positions).pos2() + offset);
+                    ui.painter().text(
+                        center,
+                        Align2::CENTER_CENTER,
+                        fig.figure_id.to_string(),
+                        FontId::new(10.0, FontFamily::Monospace),
+                        Color32::BLACK,
+                    );
+                }
+                for debug_line in sol.debug_lines.iter() {
+                    for w in debug_line.windows(2) {
+                        let p1 = self.convert_to_screen(w[0].pos2() + offset);
+                        let p2 = self.convert_to_screen(w[1].pos2() + offset);
+                        ui.painter()
+                            .line_segment([p1, p2], Stroke::new(1.5, Color32::BLACK));
+                    }
+                }
+                {
+                    let p0 = self.convert_to_screen(sol.bbox.0.pos2() + offset);
+                    let p1 = self.convert_to_screen(sol.bbox.1.pos2() + offset);
+                    let is_mouse_inside = if let Some(mouse) = ui.input().pointer.hover_pos() {
+                        mouse.x >= p0.x && mouse.x <= p1.x && mouse.y >= p0.y && mouse.y <= p1.y
+                    } else {
+                        false
+                    };
+                    if is_mouse_inside
+                        && ui.input().pointer.primary_clicked()
+                        && self.selected_solution != Some(sol_id)
+                    {
+                        change_picked_solution = Some((sol_id, sol.new_edges_used.clone()));
+                    }
+                    let selected = self.selected_solution == Some(sol_id);
+                    if is_mouse_inside || selected {
+                        let color = if selected {
+                            Color32::BLUE
+                        } else {
+                            Color32::BLACK
+                        };
+                        ui.painter().rect_stroke(
+                            Rect::from_min_max(p0, p1),
+                            Rounding::default(),
+                            Stroke::new(3.0, color),
+                        )
+                    }
+                }
                 ui.painter().text(
-                    center,
-                    Align2::CENTER_CENTER,
-                    fig.figure_id.to_string(),
+                    self.convert_to_screen(sol.text_offset.pos2() + offset + vec2(10.0, 10.0)),
+                    Align2::LEFT_TOP,
+                    format!("{:.3}{}", sol.placement_score, sol.additional_text),
                     FontId::new(10.0, FontFamily::Monospace),
                     Color32::BLACK,
                 );
             }
-            for debug_line in sol.debug_lines.iter() {
-                for w in debug_line.windows(2) {
-                    let p1 = self.convert_to_screen(w[0].pos2() + offset);
-                    let p2 = self.convert_to_screen(w[1].pos2() + offset);
-                    ui.painter()
-                        .line_segment([p1, p2], Stroke::new(1.5, Color32::BLACK));
-                }
+        }
+        if let Some((sol_id, new_edges)) = change_picked_solution {
+            self.selected_solution = Some(sol_id);
+            self.new_edges.clear();
+            for &(s1, s2) in new_edges.iter() {
+                self.new_edges.push(self.known_facts.get_edge_state(s1, s2));
             }
-            {
-                let p0 = self.convert_to_screen(sol.bbox.0.pos2() + offset);
-                let p1 = self.convert_to_screen(sol.bbox.1.pos2() + offset);
-                let is_mouse_inside = if let Some(mouse) = ui.input().pointer.hover_pos() {
-                    mouse.x >= p0.x && mouse.x <= p1.x && mouse.y >= p0.y && mouse.y <= p1.y
-                } else {
-                    false
-                };
-                if is_mouse_inside
-                    && ui.input().pointer.primary_clicked()
-                    && self.selected_solution != Some(sol_id)
-                {
-                    self.selected_solution = Some(sol_id);
-                    self.new_edges.clear();
-                    for &(s1, s2) in sol.new_edges_used.iter() {
-                        self.new_edges.push(self.known_facts.get_edge_state(s1, s2));
-                    }
-                }
-                let selected = self.selected_solution == Some(sol_id);
-                if is_mouse_inside || selected {
-                    let color = if selected {
-                        Color32::BLUE
-                    } else {
-                        Color32::BLACK
-                    };
-                    ui.painter().rect_stroke(
-                        Rect::from_min_max(p0, p1),
-                        Rounding::default(),
-                        Stroke::new(3.0, color),
-                    )
-                }
-            }
-            ui.painter().text(
-                self.convert_to_screen(sol.text_offset.pos2() + offset + vec2(10.0, 10.0)),
-                Align2::LEFT_TOP,
-                format!("{:.3}{}", sol.placement_score, sol.additional_text),
-                FontId::new(10.0, FontFamily::Monospace),
-                Color32::BLACK,
-            );
         }
     }
 
     fn show_elements(&mut self, ui: &mut eframe::egui::Ui) {
         ui.text_edit_singleline(&mut self.piece_picker);
+        if self.solutions_picker.is_some() {
+            if ui.button("Refresh").clicked() {
+                self.solutions_picker.as_mut().unwrap().refresh(
+                    &self.known_facts,
+                    &self.parsed_puzzles,
+                    &self.graph,
+                );
+                self.selected_solution = None;
+            }
+        }
         if let Some(sol_id) = self.selected_solution {
             for i in 0..self.new_edges.len() {
                 ui.horizontal(|ui| {
-                    let (s1, s2) = self.solutions[sol_id].new_edges_used[i];
+                    let (s1, s2) = self.solutions_picker.as_ref().unwrap().solutions_to_show
+                        [sol_id]
+                        .new_edges_used[i];
                     ui.label(format!("{} - {}", s1.fig, s2.fig));
                     if ui
                         .radio_value(&mut self.new_edges[i], EdgeState::Unknown, "Unknown")

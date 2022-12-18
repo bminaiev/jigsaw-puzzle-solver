@@ -150,17 +150,6 @@ impl Graph {
         }
     }
 
-    pub fn get_puzzles_with_probably_correct_directions(&self) -> Vec<bool> {
-        let mut probably_correct_puzzle_direction = vec![false; self.n];
-        for e in self.all_edges.iter() {
-            if e.existing_edge {
-                probably_correct_puzzle_direction[e.fig1] = true;
-                probably_correct_puzzle_direction[e.fig2] = true;
-            }
-        }
-        probably_correct_puzzle_direction
-    }
-
     pub fn gen_adj_matrix(&self) -> Array4<f64> {
         let n = self.n;
         let mut dist = Array4::<f64>::from_elem((n, 4, n, 4), f64::MAX / 50.0);

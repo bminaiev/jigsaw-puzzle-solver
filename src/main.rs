@@ -6,18 +6,10 @@ use std::fs;
 use eframe::{egui, epaint::pos2};
 
 use crate::{
-    borders_graph::Graph,
-    crop::crop,
-    edge_score_optimizer::optimize_edge_scores,
-    graph_solver::{solve_graph, solve_graph_add_by_3, solve_graph_border, PotentialSolution},
-    known_facts::KnownFacts,
-    my_widget::MyWidget,
-    parsed_puzzles::ParsedPuzzles,
-    placement::Placement,
-    point::PointF,
-    positions_cache::PositionsCache,
-    surface_placer::{place_on_surface, put_solutions_on_surface},
-    utils::load_image_from_path,
+    borders_graph::Graph, crop::crop, edge_score_optimizer::optimize_edge_scores,
+    graph_solver::solve_graph_add_by_3, interactive_solutions_picker::InteractiveSolutionPicker,
+    known_facts::KnownFacts, my_widget::MyWidget, parsed_puzzles::ParsedPuzzles,
+    surface_placer::put_solutions_on_surface, utils::load_image_from_path,
 };
 
 mod average_color;
@@ -29,6 +21,7 @@ mod dsu;
 mod edge_score_optimizer;
 mod figure;
 mod graph_solver;
+mod interactive_solutions_picker;
 mod known_facts;
 mod known_positions;
 mod matcher_tests;
@@ -53,13 +46,15 @@ const PUZZLE_PIXEL_WHITE_THRESHOLD: usize = 460;
 
 // TODO: nicer type
 fn main_ui(
-    solutions: Vec<PotentialSolution>,
+    solutions: Option<InteractiveSolutionPicker>,
     path: &str,
     show_parsed: bool,
     show_image: bool,
     show_matched_borders: bool,
     crop_enabled: bool,
     known_facts: KnownFacts,
+    graph: Graph,
+    parsed_puzzles: ParsedPuzzles,
 ) {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(1400.0, 1100.0)),
@@ -73,6 +68,8 @@ fn main_ui(
         show_matched_borders,
         crop_enabled,
         known_facts,
+        graph,
+        parsed_puzzles,
     ));
     eframe::run_native("jigsaw solver", options, Box::new(|_| app_created));
 }
@@ -91,9 +88,8 @@ fn main_load_graph() {
     eprintln!("graph loaded! n = {}", graph.n);
 
     let mut known_facts = KnownFacts::load();
-    let mut positions_cache = PositionsCache::load(&parsed_puzzles);
 
-    let mut solution_graph = {
+    let solution_picker = {
         let mut prev_state: Option<Graph> = if LOAD_EXISTING_SOLUTION {
             Some(serde_json::from_str(&fs::read_to_string(GRAPH_SOLUTION_PATH).unwrap()).unwrap())
         } else {
@@ -104,11 +100,8 @@ fn main_load_graph() {
             &parsed_puzzles,
             prev_state.clone(),
             &mut known_facts,
-            &mut positions_cache,
         )
     };
-    solution_graph.sort_by(|s1, s2| s1.placement_score.total_cmp(&s2.placement_score));
-    solution_graph.truncate(20);
     // fs::write(
     //     GRAPH_SOLUTION_PATH,
     //     serde_json::to_string(&solution_graph).unwrap(),
@@ -116,25 +109,52 @@ fn main_load_graph() {
     // .unwrap();
     // let placement = Placement::from_full_graph(&solution_graph);
     // let positions = place_on_surface(&graph, &placement, &parsed_puzzles);
-    put_solutions_on_surface(&mut solution_graph);
     eprintln!("positions generated!");
-    main_ui(solution_graph, PATH, true, false, true, false, known_facts);
+    main_ui(
+        Some(solution_picker),
+        PATH,
+        true,
+        false,
+        true,
+        false,
+        known_facts,
+        graph,
+        parsed_puzzles,
+    );
 }
 
 fn main_before_crop() {
+    let color_image = load_image_from_path(PATH).unwrap();
+    let parsed_puzzles = ParsedPuzzles::new(&color_image);
+    let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
     main_ui(
-        vec![],
+        None,
         BEFORE_CROP_PATH,
         false,
         true,
         false,
         true,
         KnownFacts::load(),
+        graph,
+        parsed_puzzles,
     );
 }
 
 fn main_check_parsing() {
-    main_ui(vec![], PATH, true, true, true, false, KnownFacts::load());
+    let color_image = load_image_from_path(PATH).unwrap();
+    let parsed_puzzles = ParsedPuzzles::new(&color_image);
+    let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
+    main_ui(
+        None,
+        PATH,
+        true,
+        true,
+        true,
+        false,
+        KnownFacts::load(),
+        graph,
+        parsed_puzzles,
+    );
 }
 
 fn main_check_crop() {
@@ -147,23 +167,16 @@ fn main_check_crop() {
     crop(BEFORE_CROP_PATH, &pts);
 }
 
-fn main_optimize_edge_scoring() {
-    let color_image = load_image_from_path(PATH).unwrap();
-    let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
-    let parsed_puzzles = ParsedPuzzles::new(&color_image);
-
-    let mut solutions = optimize_edge_scores(&parsed_puzzles, &graph, false);
-    put_solutions_on_surface(&mut solutions);
-    main_ui(
-        solutions,
-        PATH,
-        true,
-        false,
-        true,
-        false,
-        KnownFacts::load(),
-    );
-}
+// TODO: fix this part?
+// fn main_optimize_edge_scoring() {
+//     let color_image = load_image_from_path(PATH).unwrap();
+//     let graph: Graph = serde_json::from_str(&fs::read_to_string(GRAPH_PATH).unwrap()).unwrap();
+//     let parsed_puzzles = ParsedPuzzles::new(&color_image);
+//
+//     let mut solutions = optimize_edge_scores(&parsed_puzzles, &graph, false);
+//     put_solutions_on_surface(&mut solutions);
+//     main_ui(None, PATH, true, false, true, false, KnownFacts::load());
+// }
 
 fn main() {
     // main_before_crop();
@@ -179,13 +192,15 @@ struct MyApp {
 
 impl MyApp {
     fn new(
-        solutions: Vec<PotentialSolution>,
+        solutions: Option<InteractiveSolutionPicker>,
         path: &str,
         show_parsed: bool,
         show_image: bool,
         show_matched_borders: bool,
         crop_enabled: bool,
         known_facts: KnownFacts,
+        graph: Graph,
+        parsed_puzzles: ParsedPuzzles,
     ) -> Self {
         Self {
             my_widget: MyWidget::new(
@@ -196,6 +211,8 @@ impl MyApp {
                 show_matched_borders,
                 crop_enabled,
                 known_facts,
+                graph,
+                parsed_puzzles,
             ),
         }
     }

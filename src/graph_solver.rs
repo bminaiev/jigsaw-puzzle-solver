@@ -16,7 +16,8 @@ use crate::{
     border_matcher::is_picture_border,
     borders_graph::Graph,
     figure::BorderFigure,
-    known_facts::{self, Fact, KnownFacts},
+    interactive_solutions_picker::InteractiveSolutionPicker,
+    known_facts::{self, EdgeState, Fact, KnownFacts},
     known_positions::get_known_placement,
     parsed_puzzles::ParsedPuzzles,
     placement::Placement,
@@ -162,13 +163,13 @@ struct Edge {
     dist: f64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct PlacedFigure {
     pub figure_id: usize,
     pub positions: Vec<PointF>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct PotentialSolution {
     pub placed_figures: Vec<PlacedFigure>,
     pub placement_score: f64,
@@ -178,6 +179,20 @@ pub struct PotentialSolution {
     pub bbox: (PointF, PointF),
     pub new_figures_used: Vec<usize>,
     pub new_edges_used: Vec<(Side, Side)>,
+}
+
+impl PartialOrd for PotentialSolution {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for PotentialSolution {}
+
+impl Ord for PotentialSolution {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.placement_score.total_cmp(&other.placement_score)
+    }
 }
 
 fn is_inside(border: &[PointF], p: PointF) -> bool {
@@ -213,7 +228,7 @@ fn get_pixels_inside_figure(border: &[PointF]) -> Vec<Point> {
 }
 
 impl PotentialSolution {
-    pub fn gen_image(ps: &[Self], _fig_colors: &[Color32]) -> ColorImage {
+    pub fn gen_image(ps: &[Self]) -> ColorImage {
         eprintln!("Start generating solutions mask");
         let mut max_x = 0;
         let mut max_y = 0;
@@ -238,6 +253,34 @@ impl PotentialSolution {
         eprintln!("Image generated!");
 
         res
+    }
+
+    pub fn refresh(&self, known_facts: &KnownFacts) -> Option<Self> {
+        let all_placed_vertices = known_facts.get_all_placed_vertices();
+        let new_figures_used = self
+            .new_figures_used
+            .iter()
+            .filter(|&fig| !all_placed_vertices.contains(fig))
+            .cloned()
+            .collect_vec();
+        if new_figures_used.is_empty() {
+            return None;
+        }
+        let mut new_edges_used = vec![];
+        for &(s1, s2) in self.new_edges_used.iter() {
+            match known_facts.get_edge_state(s1, s2) {
+                EdgeState::Unknown => new_edges_used.push((s1, s2)),
+                EdgeState::GoodEdge => {}
+                EdgeState::WrongEdge => return None,
+            }
+        }
+        if new_edges_used.is_empty() {
+            return None;
+        }
+        let mut res = self.clone();
+        res.new_figures_used = new_figures_used;
+        res.new_edges_used = new_edges_used;
+        Some(res)
     }
 }
 
@@ -887,7 +930,7 @@ fn gen_relative_dists(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Array4<f
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct Search3State {
+pub struct Search3State {
     s0: [Side; 3],
     s1: [Side; 3],
     left: Option<[Side; 2]>,
@@ -895,7 +938,7 @@ struct Search3State {
 }
 
 #[derive(Clone, PartialEq)]
-struct Search3StateWithScore {
+pub struct Search3StateWithScore {
     state: Search3State,
     score: f64,
 }
@@ -919,6 +962,10 @@ impl Search3State {
         let mut s = DefaultHasher::new();
         self.hash(&mut s);
         s.finish()
+    }
+
+    pub fn get_key(&self) -> [Side; 3] {
+        self.s0
     }
 
     pub fn all_edges(&self) -> Vec<(Side, Side)> {
@@ -1028,14 +1075,14 @@ pub fn solve_graph_add_by_3(
     parsed_puzzles: &ParsedPuzzles,
     _prev_state: Option<Graph>,
     known_facts: &mut KnownFacts,
-    positions_cache: &PositionsCache,
-) -> Vec<PotentialSolution> {
+) -> InteractiveSolutionPicker {
     assert_eq!(graph.parsed_puzzles_hash, parsed_puzzles.calc_hash());
 
     eprintln!("Hello there!");
     let n = graph.n;
     eprintln!("nd array created!");
     let base_points_matrix = graph.get_base_points_matrix();
+    let positions_cache = PositionsCache::load(&parsed_puzzles);
 
     let mut on_border = vec![false; n];
     for v in 0..n {
@@ -1105,7 +1152,6 @@ pub fn solve_graph_add_by_3(
 
     let mut states = vec![];
     let mut used = vec![false; graph.n];
-    let mut res = vec![];
     {
         // let placement = get_known_placement(graph);
         // for (s1, s2) in placement.get_all_neighbours() {
@@ -1126,22 +1172,8 @@ pub fn solve_graph_add_by_3(
             &edges,
             parsed_puzzles,
             graph,
-            positions_cache,
+            &positions_cache,
             &base_points_matrix,
-        );
-
-        res.push(
-            gen_potential_solution(
-                &edges,
-                parsed_puzzles,
-                graph,
-                Some(0.0),
-                known_facts,
-                &rot_positions,
-                positions_cache,
-                &base_points_matrix,
-            )
-            .unwrap(),
         );
 
         //      [s00, s01, s02]
@@ -1208,7 +1240,6 @@ pub fn solve_graph_add_by_3(
                                 && possible_to_extend(s11.ne())
                                 && possible_to_extend(s12.ne())
                                 && !bad
-                                && (cnt_exist != 2 || mid_absent)
                             {
                                 let search_state = Search3State {
                                     s0: [s00, s01, s02],
@@ -1255,9 +1286,8 @@ pub fn solve_graph_add_by_3(
         .filter(|state| !states_cache.contains(state.state.get_hash(), 5.0))
         .collect_vec();
     eprintln!("After filtering: {} states", next_states.len());
-    // next_states.truncate(LIMIT);
 
-    let mut more_res: Vec<_> = next_states
+    let more_res: Vec<_> = next_states
         .par_iter()
         .filter_map(|state| {
             let used_edges = state.state.all_edges();
@@ -1270,39 +1300,27 @@ pub fn solve_graph_add_by_3(
                     None,
                     known_facts,
                     &rot_positions,
-                    positions_cache,
+                    &positions_cache,
                     &base_points_matrix,
                 )?,
             ))
         })
         .collect();
-    eprintln!("BEFORE SORTING.");
-    more_res.sort_by(|(a, b), (c, d)| {
-        a.s0.cmp(&c.s0)
-            .then(b.placement_score.total_cmp(&d.placement_score))
-    });
+    eprintln!("Generated All solutions.");
     for (a, b) in more_res.iter() {
         states_cache.insert(a.get_hash(), b.placement_score);
     }
     states_cache.save();
-    {
-        let mut i = 0;
-        while i != more_res.len() {
-            let mut j = i;
-            while j != more_res.len() && more_res[i].0.s0 == more_res[j].0.s0 {
-                j += 1;
-            }
-            let mut r = more_res[i].1.clone();
-            if i + 1 != j {
-                let rat = more_res[i + 1].1.placement_score / more_res[i].1.placement_score;
-                r.placement_score /= rat.powf(2.0);
-                r.additional_text += &format!(". next = {:.3}", more_res[i + 1].1.placement_score);
-            }
-            res.push(r);
-            i = j;
-        }
-    }
-    res
+    InteractiveSolutionPicker::new(
+        more_res,
+        START_VERTEX,
+        rot_positions,
+        positions_cache,
+        base_points_matrix,
+        known_facts,
+        parsed_puzzles,
+        graph,
+    )
 }
 
 fn get_correct_rotation_positions(
@@ -1342,7 +1360,7 @@ fn get_correct_rotation_positions(
     positions
 }
 
-fn gen_potential_solution(
+pub fn gen_potential_solution(
     edges: &[(Side, Side)],
     parsed_puzzles: &ParsedPuzzles,
     graph: &Graph,

@@ -101,6 +101,17 @@ impl KnownFacts {
         if self.facts.contains(&Fact::new(side1, side2, false)) {
             return EdgeState::WrongEdge;
         }
+        for fact in self.facts.iter() {
+            if fact.good_edge {
+                if fact.side1 == side1
+                    || fact.side1 == side2
+                    || fact.side2 == side1
+                    || fact.side2 == side2
+                {
+                    return EdgeState::WrongEdge;
+                }
+            }
+        }
         EdgeState::Unknown
     }
 }
