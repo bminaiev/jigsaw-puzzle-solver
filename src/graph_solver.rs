@@ -1,6 +1,7 @@
 use std::{
     cmp::{max, min},
-    collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
+    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, BinaryHeap, VecDeque},
+    hash::{Hash, Hasher},
     i16::MAX,
     process,
 };
@@ -22,6 +23,7 @@ use crate::{
     point::{Point, PointF},
     positions_cache::PositionsCache,
     rects_fitter::get_bounding_box,
+    search_states_cache::SearchStatesCache,
     surface_placer::{place_one_connected_component, rotate_component},
     topn::TopN,
     utils::{fmax, fmin, normalize_bounding_box, Side},
@@ -160,11 +162,13 @@ struct Edge {
     dist: f64,
 }
 
+#[derive(Clone)]
 pub struct PlacedFigure {
     pub figure_id: usize,
     pub positions: Vec<PointF>,
 }
 
+#[derive(Clone)]
 pub struct PotentialSolution {
     pub placed_figures: Vec<PlacedFigure>,
     pub placement_score: f64,
@@ -209,7 +213,7 @@ fn get_pixels_inside_figure(border: &[PointF]) -> Vec<Point> {
 }
 
 impl PotentialSolution {
-    pub fn gen_image(ps: &[Self]) -> ColorImage {
+    pub fn gen_image(ps: &[Self], _fig_colors: &[Color32]) -> ColorImage {
         eprintln!("Start generating solutions mask");
         let mut max_x = 0;
         let mut max_y = 0;
@@ -882,7 +886,7 @@ fn gen_relative_dists(graph: &Graph, parsed_puzzles: &ParsedPuzzles) -> Array4<f
     dist
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Search3State {
     s0: [Side; 3],
     s1: [Side; 3],
@@ -911,6 +915,12 @@ impl Ord for Search3StateWithScore {
 }
 
 impl Search3State {
+    pub fn get_hash(&self) -> u64 {
+        let mut s = DefaultHasher::new();
+        self.hash(&mut s);
+        s.finish()
+    }
+
     pub fn all_edges(&self) -> Vec<(Side, Side)> {
         let mut res = vec![];
         for s in [self.s0, self.s1].iter() {
@@ -1004,6 +1014,10 @@ fn find_best_next(
     }
     next.sort();
     next.truncate(limit_res);
+    while !next.is_empty() && next.last().unwrap().score > 10000.0 {
+        // eprintln!("Remove last with score: {}", next.last().unwrap().score);
+        next.pop();
+    }
     next
 }
 
@@ -1171,23 +1185,30 @@ pub fn solve_graph_add_by_3(
                                 cnt_exist += 1;
                                 left = None;
                             }
+                            let mut mid_absent = true;
                             if start_edges.contains_key(&s11.ne()) {
                                 cnt_exist += 1;
+                                mid_absent = false;
                             }
                             if start_edges.contains_key(&s12.ne()) {
                                 cnt_exist += 1;
                                 right = None;
                             }
-                            let bad = cnt_exist == 0
+                            // TODO: roll back?
+                            let mut bad = cnt_exist == 4
                                 && left.is_none()
                                 && right.is_none()
                                 && !on_border[s10.fig]
                                 && !on_border[s12.fig];
+                            if cnt_exist == 2 && mid_absent {
+                                bad = true;
+                            }
                             if cnt_exist < 3
                                 && possible_to_extend(s10.ne())
                                 && possible_to_extend(s11.ne())
                                 && possible_to_extend(s12.ne())
                                 && !bad
+                                && (cnt_exist != 2 || mid_absent)
                             {
                                 let search_state = Search3State {
                                     s0: [s00, s01, s02],
@@ -1220,14 +1241,20 @@ pub fn solve_graph_add_by_3(
         }
     }
 
-    const LIMIT: usize = 4;
-    let mut next_states = vec![];
-    for st in states.iter() {
-        eprintln!("doing one state.");
-        let next = find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist, &start_edges);
-        next_states.extend(next);
-    }
+    const LIMIT: usize = 300;
+    let next_states: Vec<_> = states
+        .par_iter()
+        .map(|st| find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist, &start_edges))
+        .collect();
+    let mut next_states = next_states.into_iter().flatten().collect_vec();
     next_states.sort();
+    eprintln!("Generated {} start states.", next_states.len());
+    let states_cache = SearchStatesCache::load();
+    let next_states: Vec<_> = next_states
+        .into_iter()
+        .filter(|state| !states_cache.contains(state.state.get_hash(), 5.0))
+        .collect_vec();
+    eprintln!("After filtering: {} states", next_states.len());
     // next_states.truncate(LIMIT);
 
     let mut more_res: Vec<_> = next_states
@@ -1235,7 +1262,7 @@ pub fn solve_graph_add_by_3(
         .filter_map(|state| {
             let used_edges = state.state.all_edges();
             Some((
-                state.state.s0.clone(),
+                state.state.clone(),
                 gen_potential_solution(
                     &used_edges,
                     parsed_puzzles,
@@ -1250,11 +1277,29 @@ pub fn solve_graph_add_by_3(
         })
         .collect();
     eprintln!("BEFORE SORTING.");
-    more_res.sort_by(|(a, b), (c, d)| b.placement_score.total_cmp(&d.placement_score));
-    let mut seen = BTreeSet::new();
-    for (state, r) in more_res.into_iter() {
-        if seen.insert(state) {
+    more_res.sort_by(|(a, b), (c, d)| {
+        a.s0.cmp(&c.s0)
+            .then(b.placement_score.total_cmp(&d.placement_score))
+    });
+    for (a, b) in more_res.iter() {
+        states_cache.insert(a.get_hash(), b.placement_score);
+    }
+    states_cache.save();
+    {
+        let mut i = 0;
+        while i != more_res.len() {
+            let mut j = i;
+            while j != more_res.len() && more_res[i].0.s0 == more_res[j].0.s0 {
+                j += 1;
+            }
+            let mut r = more_res[i].1.clone();
+            if i + 1 != j {
+                let rat = more_res[i + 1].1.placement_score / more_res[i].1.placement_score;
+                r.placement_score /= rat.powf(2.0);
+                r.additional_text += &format!(". next = {:.3}", more_res[i + 1].1.placement_score);
+            }
             res.push(r);
+            i = j;
         }
     }
     res

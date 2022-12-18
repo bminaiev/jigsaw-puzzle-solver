@@ -38,6 +38,7 @@ mod placement;
 mod point;
 mod positions_cache;
 mod rects_fitter;
+mod search_states_cache;
 mod surface_placer;
 mod topn;
 mod utils;

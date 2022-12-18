@@ -74,6 +74,11 @@ impl MyWidget {
         let color_image = load_image_from_path(path).unwrap();
 
         let parsed_puzzles = ParsedPuzzles::new(&color_image);
+
+        let mut rng = rand::thread_rng();
+        let fig_colors = (0..parsed_puzzles.figures.len())
+            .map(|_| gen_good_color(&mut rng))
+            .collect_vec();
         let mask_image = if show_parsed {
             let color = parsed_puzzles.gen_image(&known_facts);
             save_color_image(&color, "img/puzzle.jpg");
@@ -86,16 +91,13 @@ impl MyWidget {
         } else {
             Some(RetainedImage::from_color_image(
                 "solutions mask",
-                PotentialSolution::gen_image(&solutions),
+                PotentialSolution::gen_image(&solutions, &fig_colors),
             ))
         };
 
         let image = RetainedImage::from_color_image("test", color_image.clone());
         let img_size = image.size_vec2();
-        let mut rng = rand::thread_rng();
-        let fig_colors = (0..parsed_puzzles.figures.len())
-            .map(|_| gen_good_color(&mut rng))
-            .collect_vec();
+
         Self {
             offset: vec2(0.0, 0.0),
             zoom_log: -1.0,

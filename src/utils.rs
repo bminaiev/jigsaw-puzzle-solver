@@ -14,7 +14,9 @@ pub fn load_image_from_path(path: &str) -> Result<ColorImage, image::ImageError>
 }
 
 // TODO: move to a separate file
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash,
+)]
 pub struct Side {
     pub fig: usize,
     pub side: usize,

@@ -7,6 +7,7 @@ use std::{
 use eframe::egui::plot::Corner;
 use itertools::Itertools;
 use ndarray::Array4;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     border_matcher::{
@@ -181,14 +182,19 @@ fn local_optimize_positions(
         let calc_score = |to_cs: &[CoordinateSystem]| {
             let my_pos = calc_new_positions(to_cs);
             let mut res = EdgesScores::new();
-            for &(s1, s2) in all_edges.iter() {
-                let dist = get_borders_dist(
-                    &my_pos[local_id_mapping[&s1.fig]],
-                    &my_pos[local_id_mapping[&s2.fig]],
-                    parsed_puzzles,
-                    s1,
-                    s2,
-                );
+            let all_dists: Vec<_> = all_edges
+                .par_iter()
+                .map(|&(s1, s2)| {
+                    get_borders_dist(
+                        &my_pos[local_id_mapping[&s1.fig]],
+                        &my_pos[local_id_mapping[&s2.fig]],
+                        parsed_puzzles,
+                        s1,
+                        s2,
+                    )
+                })
+                .collect();
+            for &dist in all_dists.iter() {
                 res.add_score(dist);
             }
             res
@@ -202,7 +208,7 @@ fn local_optimize_positions(
         if very_big {
             eprintln!("start score: {}", start_score.get_final_score());
         }
-        if start_score.get_final_score() < 20.0 && very_big {
+        if start_score.get_final_score() < 25.0 && very_big {
             break;
         }
         let to_cs =

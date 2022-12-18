@@ -38,11 +38,21 @@ const DEFAULT_PATH: &str = "facts.json";
 
 impl KnownFacts {
     pub fn load() -> Self {
-        if let Ok(content) = fs::read_to_string(DEFAULT_PATH) {
+        let res: Self = if let Ok(content) = fs::read_to_string(DEFAULT_PATH) {
             serde_json::from_str(&content).unwrap()
         } else {
             Self { facts: vec![] }
+        };
+        /*let mut new_facts = vec![];
+        for f in res.facts.into_iter() {
+            if f.side1.fig == 844 || f.side2.fig == 844 {
+            } else {
+                new_facts.push(f);
+            }
         }
+        let res = Self { facts: new_facts };
+        res.save();*/
+        res
     }
 
     pub fn save(&self) {
