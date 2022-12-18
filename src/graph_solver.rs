@@ -1272,7 +1272,7 @@ pub fn solve_graph_add_by_3(
         }
     }
 
-    const LIMIT: usize = 300;
+    const LIMIT: usize = 275;
     let next_states: Vec<_> = states
         .par_iter()
         .map(|st| find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist, &start_edges))

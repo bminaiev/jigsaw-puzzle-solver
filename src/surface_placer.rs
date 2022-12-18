@@ -239,7 +239,7 @@ pub fn rotate_component(
     for &c in component.iter() {
         all_points.extend(&positions[c].as_ref().unwrap().clone());
     }
-    let mut probably_correct_dir = graph.get_puzzles_with_probably_correct_directions();
+    let mut probably_correct_dir = vec![false; graph.n];
     for &v in base.iter() {
         probably_correct_dir[v] = true;
     }
