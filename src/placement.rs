@@ -582,7 +582,9 @@ impl Placement {
                             existing_edges,
                             new_figures_edges,
                         };
-                        if potential_group.each_new_figure_has_at_least_two_edges() {
+                        if potential_group.each_new_figure_has_at_least_two_edges()
+                        // && potential_group.any_with_two_existing_edges()
+                        {
                             res.push(potential_group);
                         }
                     }
@@ -710,6 +712,15 @@ impl PotentialGroupLocation {
             }
         }
         true
+    }
+
+    pub fn any_with_two_existing_edges(&self) -> bool {
+        for loc in self.locations.iter() {
+            if loc.neighbors.iter().filter(|ne| ne.is_some()).count() >= 2 {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn get_way_edges(&self, first_sides: &[Side]) -> Vec<(Side, Side)> {

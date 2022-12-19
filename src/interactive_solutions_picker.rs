@@ -10,7 +10,7 @@ use crate::{
     graph_solver::{gen_potential_solution, PotentialSolution},
     known_facts::KnownFacts,
     parsed_puzzles::ParsedPuzzles,
-    placement::{Placement, PotentialGroupLocation, Search3StateWithScore},
+    placement::{Placement, Search3StateWithScore},
     point::PointF,
     positions_cache::PositionsCache,
     surface_placer::put_solutions_on_surface,
@@ -73,7 +73,8 @@ impl InteractiveSolutionPicker {
             graph,
         ));
         self.all_solutions.sort_by(|(a, b), (c, d)| {
-            a.cmp(&c)
+            a.get_key()
+                .cmp(&c.get_key())
                 .then(b.placement_score.total_cmp(&d.placement_score))
         });
 
@@ -87,10 +88,11 @@ impl InteractiveSolutionPicker {
                     j += 1;
                 }
                 let mut r = self.all_solutions[i].1.clone();
+                r.additional_text += &format!(". More: {}", j - i - 1);
                 if i + 1 != j {
                     let rat = self.all_solutions[i + 1].1.placement_score
                         / self.all_solutions[i].1.placement_score;
-                    r.placement_score /= rat.powf(2.0);
+                    // r.placement_score /= rat.powf(0.5);
                     r.additional_text += &format!(
                         ". next = {:.3}",
                         self.all_solutions[i + 1].1.placement_score
@@ -101,7 +103,7 @@ impl InteractiveSolutionPicker {
             }
         }
         self.solutions_to_show.sort();
-        self.solutions_to_show.truncate(25);
+        self.solutions_to_show.truncate(40);
         put_solutions_on_surface(&mut self.solutions_to_show);
 
         let mask_image = RetainedImage::from_color_image(

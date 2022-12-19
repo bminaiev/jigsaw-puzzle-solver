@@ -138,6 +138,7 @@ fn local_optimize_positions(
     positions: &mut [Option<Vec<PointF>>],
     parsed_puzzles: &ParsedPuzzles,
     cur_component: &[usize],
+    new_points: &[usize],
 ) -> f64 {
     let local_id_mapping: BTreeMap<usize, usize> = cur_component
         .iter()
@@ -158,8 +159,8 @@ fn local_optimize_positions(
 
     let mut final_score = 0.0;
 
-    let very_big = cur_component.len() > 20;
-    for glob_iter in 0..(if very_big { 1 } else { 1 }) {
+    let very_big = cur_component.len() > 26;
+    for glob_iter in 0..1 {
         let move_cs = cur_component
             .iter()
             .map(|&v| MoveCS::new(&parsed_puzzles.figures[v], &positions[v].as_ref().unwrap()))
@@ -200,19 +201,74 @@ fn local_optimize_positions(
             res
         };
 
-        let to_cs = move_cs
+        let mut to_cs = move_cs
             .iter()
             .map(|move_cs| move_cs.to_cs.clone())
             .collect_vec();
+        if very_big {
+            let mut new_points = new_points.to_vec();
+            {
+                const LIMIT_NEW: usize = 30;
+                let my_pos = calc_new_positions(&to_cs);
+                let mut sum_dists = vec![0.0; cur_component.len()];
+                let mut cnt = vec![0; cur_component.len()];
+                for &(s1, s2) in all_edges.iter() {
+                    let d = get_borders_dist(
+                        &my_pos[local_id_mapping[&s1.fig]],
+                        &my_pos[local_id_mapping[&s2.fig]],
+                        parsed_puzzles,
+                        s1,
+                        s2,
+                    );
+                    sum_dists[local_id_mapping[&s1.fig]] += d;
+                    sum_dists[local_id_mapping[&s2.fig]] += d;
+                    cnt[local_id_mapping[&s1.fig]] += 1;
+                    cnt[local_id_mapping[&s2.fig]] += 1;
+                }
+                for i in 0..sum_dists.len() {
+                    sum_dists[i] /= cnt[i] as f64;
+                }
+                let mut more_points = vec![];
+                for i in 0..sum_dists.len() {
+                    more_points.push(i);
+                }
+                more_points
+                    .sort_by(|&id1, &id2| sum_dists[id1].total_cmp(&sum_dists[id2]).reverse());
+                more_points.truncate(LIMIT_NEW);
+                new_points.extend(more_points);
+            }
+            eprintln!(
+                "Very big, will use subset of coords. Start score: {}. New pts: {}",
+                calc_score(&to_cs).get_final_score(),
+                new_points.len()
+            );
+            to_cs = local_optimize_coordinate_systems(
+                &to_cs,
+                |to_cs| calc_score(to_cs).get_final_score(),
+                &new_points,
+            );
+            eprintln!(
+                "After optimize score: {}",
+                calc_score(&to_cs).get_final_score()
+            );
+            let new_pos = calc_new_positions(&to_cs);
+            for local_id in 0..cur_component.len() {
+                positions[cur_component[local_id]] = Some(new_pos[local_id].clone());
+            }
+        }
         let start_score = calc_score(&to_cs);
         if very_big {
             eprintln!("start score: {}", start_score.get_final_score());
         }
-        if start_score.get_final_score() < 25.0 && very_big {
+        if start_score.get_final_score() < 150.0 && very_big {
+            final_score = start_score.get_final_score();
             break;
         }
-        let to_cs =
-            local_optimize_coordinate_systems(&to_cs, |to_cs| calc_score(to_cs).get_final_score());
+        let to_cs = local_optimize_coordinate_systems(
+            &to_cs,
+            |to_cs| calc_score(to_cs).get_final_score(),
+            &(0..to_cs.len()).collect_vec(),
+        );
         let new_score = calc_score(&to_cs);
         final_score = new_score.get_final_score();
         if new_score.get_final_score() < start_score.get_final_score() {
@@ -303,7 +359,7 @@ pub fn place_one_connected_component(
 ) -> Option<f64> {
     // let mut matched_borders = BTreeMap::new();
 
-    let very_big = component.len() > 10;
+    let very_big = component.len() > 26;
 
     let used_edges = dedup_edges(used_edges);
     let mut used_edges_two_sides = vec![];
@@ -338,6 +394,17 @@ pub fn place_one_connected_component(
         to_cs[fig] = Some(CoordinateSystem::new(p1_placed, p2_placed - p1_placed));
         some_placed = true;
     }
+    let new_figures = component
+        .iter()
+        .enumerate()
+        .filter_map(|(pos, &fig)| {
+            if positions[fig].is_none() {
+                Some(pos)
+            } else {
+                None
+            }
+        })
+        .collect_vec();
     if !some_placed {
         let root = component[0];
         positions[root] = Some(gen_basic_position(&parsed_puzzles.figures[root]));
@@ -384,6 +451,13 @@ pub fn place_one_connected_component(
 
         if !changed {
             break;
+        }
+    }
+
+    for (s1, s2) in used_edges.iter() {
+        if to_cs[s1.fig].is_none() || to_cs[s2.fig].is_none() {
+            // this is not one connected component, can't place it.
+            return None;
         }
     }
 
@@ -434,6 +508,7 @@ pub fn place_one_connected_component(
         positions,
         parsed_puzzles,
         component,
+        &new_figures,
     ))
 }
 

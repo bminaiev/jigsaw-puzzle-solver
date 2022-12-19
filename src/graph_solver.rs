@@ -240,14 +240,19 @@ impl PotentialSolution {
         let mut res = ColorImage::new([max_x, max_y], Color32::TRANSPARENT);
 
         for sol in ps.iter() {
-            for fig in sol.placed_figures.iter() {
-                if sol.new_figures_used.contains(&fig.figure_id) {
-                    continue;
-                }
-                let pixels = get_pixels_inside_figure(&fig.positions);
-                for p in pixels.iter() {
-                    res[(p.x, p.y)] = Color32::LIGHT_GRAY;
-                }
+            let to_color: Vec<_> = sol
+                .placed_figures
+                .par_iter()
+                .map(|fig| {
+                    if sol.new_figures_used.contains(&fig.figure_id) {
+                        return vec![];
+                    }
+                    get_pixels_inside_figure(&fig.positions)
+                })
+                .flatten()
+                .collect();
+            for p in to_color.iter() {
+                res[(p.x, p.y)] = Color32::LIGHT_GRAY;
             }
         }
         eprintln!("Image generated!");
@@ -1108,10 +1113,11 @@ pub fn solve_graph_add_by_3(
         }
     }
 
-    const LIMIT: usize = 5;
+    const LIMIT: usize = 250;
+    const LIMIT_RES: usize = 50;
     let next_states: Vec<_> = states
         .par_iter()
-        .map(|st| find_best_next(&st, LIMIT, LIMIT, &to_check, &used, dist))
+        .map(|st| find_best_next(&st, LIMIT, LIMIT_RES, &to_check, &used, dist))
         .collect();
     let mut next_states = next_states.into_iter().flatten().collect_vec();
     next_states.sort();
